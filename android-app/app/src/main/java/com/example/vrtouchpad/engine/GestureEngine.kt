@@ -32,13 +32,13 @@ class GestureEngine(
     // 1~2mm 的自然滑動，用原本給單指點擊/拖曳判斷用的 8dp 太容易誤觸滾動，
     // 一旦誤判成滾動，點擊事件會被整個吃掉且無感（因為滾動量太小看不出來）。
     // 拉高到 24dp，需要更明顯、更像刻意滾動的位移才會觸發。
-    private val scrollActivationSlopPx = 24f * density
+    private val scrollActivationSlopPx = 32f * density
 
     private val threeFingerSwipePx = 24f * density
 
     // 採樣時間窗口 (限制最高 ~100Hz 打包發送，完全避免 Wi-Fi 卡頓與干涉抖動)
     private val emitIntervalMs = 10L
-    private val multiTapWindowMs = 250L
+    private val multiTapWindowMs = 120L
     private val tapTimeoutMs = 280L
 
     private enum class Mode {
