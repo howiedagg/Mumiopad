@@ -24,9 +24,10 @@ class GestureEngine(
     private val stillPx = 4f * density
     private val threeFingerSwipePx = 24f * density
 
-    // 手勢時間窗參數
-    private val multiTapWindowMs = 250L // 兩指落下的時間差，必須小於此值才算「同時」
-    private val tapTimeoutMs = 280L     // 手指從落下到抬起的時間，必須小於此值才算「點按」
+    // 採樣時間窗口 (限制最高 ~100Hz 打包發送，完全避免 Wi-Fi 卡頓與干涉抖動)
+    private val emitIntervalMs = 10L
+    private val multiTapWindowMs = 250L
+    private val tapTimeoutMs = 280L
 
     private enum class Mode {
         IDLE, MOVE, PREDRAG_WAIT, DRAG, TWO_FINGER_WAIT, SCROLL, THREE_FINGER
@@ -49,7 +50,6 @@ class GestureEngine(
     private var threeFingerStartX = 0f
     private var dragging = false
 
-    // 紀錄時間以判斷「同時」與「點按」
     private var firstFingerDownTime = 0L
     private var twoFingerDownTime = 0L
 
@@ -69,7 +69,7 @@ class GestureEngine(
             1 -> {
                 firstFingerId = id
                 mode = Mode.MOVE
-                firstFingerDownTime = System.currentTimeMillis() // 紀錄第一指落下的時間
+                firstFingerDownTime = System.currentTimeMillis()
 
                 startLongPressWatcher(id)
                 transitionedFromMultiTouch = false
@@ -83,8 +83,6 @@ class GestureEngine(
                 if (dragging) return
 
                 twoFingerDownTime = System.currentTimeMillis()
-
-                // 嚴格判定「同時」
                 val timeSinceFirst = twoFingerDownTime - firstFingerDownTime
                 rightClickCandidate = timeSinceFirst <= multiTapWindowMs
 
@@ -110,20 +108,21 @@ class GestureEngine(
 
     fun onMove(id: Long, x: Float, y: Float) {
         val p = pointers[id] ?: return
-        val lastX = p.x
-        val lastY = p.y
+        val dx = x - p.x
+        val dy = y - p.y
         p.x = x
         p.y = y
+
+        val now = System.currentTimeMillis()
 
         when (mode) {
             Mode.MOVE -> if (id == firstFingerId) {
                 if (dist(p) >= slopPx) longPressJob?.cancel()
 
-                accumulatedDx += x - lastX
-                accumulatedDy += y - lastY
+                accumulatedDx += dx
+                accumulatedDy += dy
 
-                val now = System.currentTimeMillis()
-                if (now - lastEmitTime >= 12) {
+                if (now - lastEmitTime >= emitIntervalMs) {
                     if (accumulatedDx != 0f || accumulatedDy != 0f) {
                         emit(TouchOutEvent.Move(accumulatedDx, accumulatedDy))
                         accumulatedDx = 0f
@@ -142,11 +141,10 @@ class GestureEngine(
             }
 
             Mode.DRAG -> if (id == firstFingerId) {
-                accumulatedDragDx += x - lastX
-                accumulatedDragDy += y - lastY
+                accumulatedDragDx += dx
+                accumulatedDragDy += dy
 
-                val now = System.currentTimeMillis()
-                if (now - lastEmitTime >= 12) {
+                if (now - lastEmitTime >= emitIntervalMs) {
                     if (accumulatedDragDx != 0f || accumulatedDragDy != 0f) {
                         emit(TouchOutEvent.Move(accumulatedDragDx, accumulatedDragDy))
                         accumulatedDragDx = 0f
@@ -157,9 +155,7 @@ class GestureEngine(
             }
 
             Mode.TWO_FINGER_WAIT -> {
-                if (dist(p) >= slopPx) {
-                    rightClickCandidate = false // 移動過大，取消右鍵資格
-                }
+                if (dist(p) >= slopPx) rightClickCandidate = false
 
                 val p1 = pointers.values.elementAtOrNull(0)
                 val p2 = pointers.values.elementAtOrNull(1)
@@ -169,7 +165,7 @@ class GestureEngine(
 
                     if (abs(currentAvgY - startAvgY) >= slopPx) {
                         mode = Mode.SCROLL
-                        rightClickCandidate = false // 進入滾動模式，不觸發任何點擊
+                        rightClickCandidate = false
                         emit(TouchOutEvent.Scroll(currentAvgY - lastScrollY))
                     }
                     lastScrollY = currentAvgY
@@ -181,10 +177,9 @@ class GestureEngine(
                 val p2 = pointers.values.elementAtOrNull(1)
                 if (p1 != null && p2 != null) {
                     val currentAvgY = (p1.y + p2.y) / 2
-                    accumulatedScrollDy += currentAvgY - lastScrollY
+                    accumulatedScrollDy += (currentAvgY - lastScrollY)
 
-                    val now = System.currentTimeMillis()
-                    if (now - lastEmitTime >= 16) {
+                    if (now - lastEmitTime >= emitIntervalMs) {
                         if (abs(accumulatedScrollDy) > 0.1f) {
                             emit(TouchOutEvent.Scroll(accumulatedScrollDy))
                             accumulatedScrollDy = 0f
@@ -203,12 +198,13 @@ class GestureEngine(
         val p = pointers[id] ?: return
         val oldMode = mode
 
-        // 1. 先處理當前狀態的釋放事件
         when (oldMode) {
             Mode.MOVE -> if (id == firstFingerId) {
                 longPressJob?.cancel()
                 if (accumulatedDx != 0f || accumulatedDy != 0f) {
                     emit(TouchOutEvent.Move(accumulatedDx, accumulatedDy))
+                    accumulatedDx = 0f
+                    accumulatedDy = 0f
                 }
                 if (dist(p) < slopPx && !transitionedFromMultiTouch) {
                     emit(TouchOutEvent.Click("left", "click"))
@@ -234,10 +230,8 @@ class GestureEngine(
                 val tapDuration = System.currentTimeMillis() - twoFingerDownTime
                 if (tapDuration <= tapTimeoutMs) {
                     if (rightClickCandidate) {
-                        // 情況 A：兩指同時放下、快速同時抬起 ──► 觸發右鍵
                         emit(TouchOutEvent.Click("right", "click"))
                     } else if (id != firstFingerId) {
-                        // 情況 B：一指原本就按住（firstFingerId），另一指快速單擊（id 抬起且時間短） ──► 觸發左鍵
                         emit(TouchOutEvent.Click("left", "click"))
                     }
                 }
@@ -259,10 +253,8 @@ class GestureEngine(
             Mode.IDLE -> Unit
         }
 
-        // 2. 自指針列表中移除已放開的手指
         pointers.remove(id)
 
-        // 3. 多指無縫降階過渡邏輯
         if (pointers.isEmpty()) {
             mode = Mode.IDLE
             firstFingerId = null

@@ -8,6 +8,7 @@ import com.example.vrtouchpad.data.DiscoveredServer
 import com.example.vrtouchpad.data.PairingManager
 import com.example.vrtouchpad.data.SavedServer
 import com.example.vrtouchpad.data.SettingsStore
+import com.example.vrtouchpad.data.WifiPerformanceManager
 import com.example.vrtouchpad.network.ConnState
 import com.example.vrtouchpad.network.TouchpadWebSocketClient
 import kotlinx.coroutines.Job
@@ -19,6 +20,7 @@ import kotlinx.coroutines.launch
 class TouchpadViewModel(context: Context) : ViewModel() {
     private val pairingManager = PairingManager(context)
     private val settingsStore = SettingsStore(context)
+    private val wifiPerformanceManager = WifiPerformanceManager(context) // 【新增】
 
     private val _connState = MutableStateFlow(ConnState.DISCONNECTED)
     val connState: StateFlow<ConnState> = _connState
@@ -64,7 +66,15 @@ class TouchpadViewModel(context: Context) : ViewModel() {
     private var supervisorJob: Job? = null
 
     val wsClient = TouchpadWebSocketClient(
-        onStateChange = { _connState.value = it },
+        onStateChange = { state ->
+            _connState.value = state
+            // 【新增】：連線建立時鎖定 WiFi 高效能模式，斷線時釋放
+            if (state == ConnState.CONNECTED) {
+                wifiPerformanceManager.acquire()
+            } else {
+                wifiPerformanceManager.release()
+            }
+        },
         onPairSuccess = { token, pcName ->
             _isPairingBusy.value = false
             _pairingError.value = null
@@ -77,6 +87,7 @@ class TouchpadViewModel(context: Context) : ViewModel() {
             _targetServerToPair.value = null
             refreshServerLists()
             _connState.value = ConnState.CONNECTED
+            wifiPerformanceManager.acquire() // 【新增】：配對成功後同樣視為已連線
             _showPairDialog.value = false
             _unpairedDiscovered.value = emptyList()
         },
@@ -108,6 +119,7 @@ class TouchpadViewModel(context: Context) : ViewModel() {
             stopSupervisorLoop()
             wsClient.close()
             _connState.value = ConnState.DISCONNECTED
+            wifiPerformanceManager.release() // 【新增】
         }
     }
 
@@ -283,5 +295,6 @@ class TouchpadViewModel(context: Context) : ViewModel() {
     override fun onCleared() {
         super.onCleared()
         wsClient.close()
+        wifiPerformanceManager.release() // 【新增】
     }
 }

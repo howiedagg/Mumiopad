@@ -1,6 +1,5 @@
 package com.example.vrtouchpad.ui.components
 
-import android.util.Log
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -37,7 +36,9 @@ fun Touchpad(
             scope = scope,
             density = density,
             emit = { event ->
-                Log.d("TOUCHPAD", "發送手勢事件: $event")
+                // 【效能修正】：移除高頻熱路徑上的 Log.d。
+                // 每次移動最高可達 ~100Hz，字串模板組裝 + JNI logcat 呼叫
+                // 會在 UI thread 上造成可感知的微卡頓，僅在需要除錯時再手動打開。
                 val scaled = when (event) {
                     is TouchOutEvent.Move -> TouchOutEvent.Move(
                         event.dx * currentMouseSpeed, event.dy * currentMouseSpeed,

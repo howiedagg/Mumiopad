@@ -20,6 +20,9 @@ import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.viewmodel.compose.viewModel
 
 import com.example.vrtouchpad.ui.TouchpadViewModel
 import com.example.vrtouchpad.ui.components.StatusBar
@@ -38,8 +41,19 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             MaterialTheme {
-                val context = androidx.compose.ui.platform.LocalContext.current
-                val viewModel = remember { TouchpadViewModel(context) }
+                val context = androidx.compose.ui.platform.LocalContext.current.applicationContext
+
+                // 【修正】：改用標準 ViewModelProvider.Factory 建立，
+                // 讓 ViewModel 正確掛載在 Activity 的生命週期上，
+                // 避免螢幕旋轉 / 系統重建 Activity 時連線狀態被重置。
+                val viewModel: TouchpadViewModel = viewModel(
+                    factory = object : ViewModelProvider.Factory {
+                        @Suppress("UNCHECKED_CAST")
+                        override fun <T : ViewModel> create(modelClass: Class<T>): T {
+                            return TouchpadViewModel(context) as T
+                        }
+                    }
+                )
                 AppRoot(viewModel)
             }
         }

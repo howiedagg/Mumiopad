@@ -11,6 +11,7 @@ import sys
 import uuid
 from pathlib import Path
 import threading
+import time
 
 import ctypes
 import websockets
@@ -35,6 +36,13 @@ keyboard = KeyboardController()
 IS_WINDOWS = sys.platform == "win32"
 REG_RUN_PATH = r"Software\Microsoft\Windows\CurrentVersion\Run"
 REG_APP_NAME = "VRTouchpadServer"
+
+# Win32 物理滑鼠事件常數
+MOUSEEVENTF_MOVE = 0x0001
+MOUSEEVENTF_LEFTDOWN = 0x0002
+MOUSEEVENTF_LEFTUP = 0x0004
+MOUSEEVENTF_RIGHTDOWN = 0x0008
+MOUSEEVENTF_RIGHTUP = 0x0010
 
 SPECIAL_KEYS = {
     "ESC": Key.esc,
@@ -117,11 +125,11 @@ def get_lan_ip() -> str:
 # Windows 專用：控制 CMD 視窗顯示 or 隱藏
 def set_console_visibility(visible: bool):
     global console_visible
-    console_visible = visible
     if IS_WINDOWS:
         hwnd = ctypes.windll.kernel32.GetConsoleWindow()
         if hwnd:
             ctypes.windll.user32.ShowWindow(hwnd, 5 if visible else 0)
+    console_visible = visible
 
 # 開機自啟動
 def is_startup_enabled() -> bool:
@@ -153,19 +161,88 @@ def toggle_startup_setting():
     except Exception as e:
         print(f"切換開機啟動失敗: {e}")
 
-# 高效游標移動與實體點擊（Windows 平台優化）
-if IS_WINDOWS:
-    MOUSEEVENTF_MOVE = 0x0001
-    MOUSEEVENTF_LEFTDOWN = 0x0002
-    MOUSEEVENTF_LEFTUP = 0x0004
-    MOUSEEVENTF_RIGHTDOWN = 0x0008
-    MOUSEEVENTF_RIGHTUP = 0x0010
+# ==========================================
+# 終極平滑游標引擎 (獨立渲染執行緒)
+# ==========================================
+class SmoothMouseEngine:
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.buffer_dx = 0.0
+        self.buffer_dy = 0.0
+        self.remainder_x = 0.0
+        self.remainder_y = 0.0
+        self.vx = 0.0
+        self.vy = 0.0
+        
+        self.stiffness = 0.65 
+        self.running = True
 
-    def apply_move(dx: float, dy: float):
-        ctypes.windll.user32.mouse_event(MOUSEEVENTF_MOVE, int(dx), int(dy), 0, 0)
+        # --- 新增：若是 Windows，強制將作業系統排程精度拉高到 1ms ---
+        if IS_WINDOWS:
+            try:
+                # 請求 Windows 啟用 1 毫秒的高精度計時器週期
+                ctypes.windll.winmm.timeBeginPeriod(1)
+                print("Windows 1ms 高精度計時器已啟用")
+            except Exception as e:
+                print(f"無法啟用系統高精度計時器: {e}")
+        # --------------------------------------------------------
+        
+        self.thread = threading.Thread(target=self._loop, daemon=True)
+        self.thread.start()
 
-    def apply_click(button: str, action: str):
-        # 決定物理 Flag
+    def add_movement(self, dx: float, dy: float):
+        with self.lock:
+            self.buffer_dx += dx
+            self.buffer_dy += dy
+
+    def _loop(self):
+        sleep_time = 0.008  # 現在 Windows 精度提升後，8ms 休眠將會非常精確
+        while self.running:
+            with self.lock:
+                dx = self.buffer_dx
+                dy = self.buffer_dy
+                self.buffer_dx = 0.0
+                self.buffer_dy = 0.0
+            
+            self.vx = self.vx * (1.0 - self.stiffness) + dx * self.stiffness
+            self.vy = self.vy * (1.0 - self.stiffness) + dy * self.stiffness
+
+            if abs(self.vx) < 0.05: self.vx = 0.0
+            if abs(self.vy) < 0.05: self.vy = 0.0
+
+            if self.vx != 0 or self.vy != 0:
+                total_x = self.vx + self.remainder_x
+                total_y = self.vy + self.remainder_y
+                
+                step_x = int(total_x)
+                step_y = int(total_y)
+                
+                self.remainder_x = total_x - step_x
+                self.remainder_y = total_y - step_y
+                
+                if step_x != 0 or step_y != 0:
+                    if IS_WINDOWS:
+                        ctypes.windll.user32.mouse_event(MOUSEEVENTF_MOVE, step_x, step_y, 0, 0)
+                    else:
+                        mouse.move(step_x, step_y)
+            
+            time.sleep(sleep_time)
+
+    # 程式關閉時釋放高精度計時器
+    def __del__(self):
+        if IS_WINDOWS:
+            try:
+                ctypes.windll.winmm.timeEndPeriod(1)
+            except Exception:
+                pass
+
+smooth_mouse = SmoothMouseEngine()
+
+def apply_move(dx: float, dy: float):
+    smooth_mouse.add_movement(dx, dy)
+
+def apply_click(button: str, action: str):
+    if IS_WINDOWS:
         if button == "left":
             down_flag = MOUSEEVENTF_LEFTDOWN
             up_flag = MOUSEEVENTF_LEFTUP
@@ -174,19 +251,13 @@ if IS_WINDOWS:
             up_flag = MOUSEEVENTF_RIGHTUP
 
         if action == "click":
-            # 【極速優化】：使用 Win32 API 傳送 0ms 延遲的實體點擊訊號，繞過 pynput 的內部 sleep
             ctypes.windll.user32.mouse_event(down_flag, 0, 0, 0, 0)
             ctypes.windll.user32.mouse_event(up_flag, 0, 0, 0, 0)
         elif action == "down":
             ctypes.windll.user32.mouse_event(down_flag, 0, 0, 0, 0)
         elif action == "up":
             ctypes.windll.user32.mouse_event(up_flag, 0, 0, 0, 0)
-else:
-    # 非 Windows 平台（Mac/Linux）退回 pynput 處理
-    def apply_move(dx: float, dy: float):
-        mouse.move(dx, dy)
-
-    def apply_click(button: str, action: str):
+    else:
         btn = Button.left if button == "left" else Button.right
         if action == "click":
             mouse.click(btn, 1)
@@ -247,6 +318,14 @@ async def handler(websocket):
     peer = websocket.remote_address
     state.active_connections.add(websocket)
     print(f"新連線要求: {peer}")
+
+    # 強制開啟極低延遲傳輸
+    try:
+        sock = websocket.transport.get_extra_info('socket')
+        if sock is not None:
+            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+    except Exception as e:
+        print(f"設定 TCP_NODELAY 失敗: {e}")
 
     try:
         async for raw in websocket:

@@ -10,22 +10,54 @@ import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import org.json.JSONObject
+import java.io.IOException
+import java.net.InetAddress
+import java.net.Socket
 import java.util.concurrent.TimeUnit
+import javax.net.SocketFactory
 
 enum class ConnState { DISCONNECTED, CONNECTING, PAIRING, CONNECTED, AUTH_FAILED }
 
+/**
+ * 【新增】：強制關閉 Nagle 演算法的 SocketFactory。
+ * 觸控板傳輸屬於「高頻小封包」情境，Nagle + 延遲 ACK 交互作用
+ * 會造成週期性的 ~40ms 延遲堆積，關閉後可明顯改善微卡頓。
+ */
+private class NoDelaySocketFactory : SocketFactory() {
+    private fun Socket.applyNoDelay(): Socket = apply { tcpNoDelay = true }
+
+    @Throws(IOException::class)
+    override fun createSocket(): Socket = Socket().applyNoDelay()
+
+    @Throws(IOException::class)
+    override fun createSocket(host: String, port: Int): Socket =
+        Socket(host, port).applyNoDelay()
+
+    @Throws(IOException::class)
+    override fun createSocket(host: String, port: Int, localHost: InetAddress, localPort: Int): Socket =
+        Socket(host, port, localHost, localPort).applyNoDelay()
+
+    @Throws(IOException::class)
+    override fun createSocket(host: InetAddress, port: Int): Socket =
+        Socket(host, port).applyNoDelay()
+
+    @Throws(IOException::class)
+    override fun createSocket(address: InetAddress, port: Int, localAddress: InetAddress, localPort: Int): Socket =
+        Socket(address, port, localAddress, localPort).applyNoDelay()
+}
+
 class TouchpadWebSocketClient(
     private val onStateChange: (ConnState) -> Unit,
-    private val onPairSuccess: (token: String, pcName: String) -> Unit, // 【修改】：回呼新增 pcName
+    private val onPairSuccess: (token: String, pcName: String) -> Unit,
     private val onPairFail: (reason: String) -> Unit
 ) {
     private var ws: WebSocket? = null
     private val client = OkHttpClient.Builder()
         .pingInterval(5, TimeUnit.SECONDS)
+        .socketFactory(NoDelaySocketFactory()) // 【新增】：關閉 Nagle
         .build()
 
     private val mainHandler = Handler(Looper.getMainLooper())
-
     private var isPairingMode = false
 
     fun connectForPairing(host: String, port: Int, pairCode: String) {
@@ -114,7 +146,7 @@ class TouchpadWebSocketClient(
                 "pair_success" -> {
                     isPairingMode = false
                     val token = json.optString("token")
-                    val pcName = json.optString("pc_name", "我的電腦") // 【新增】：提取電腦實際名稱
+                    val pcName = json.optString("pc_name", "我的電腦")
                     onPairSuccess(token, pcName)
                 }
                 "pair_fail" -> {
@@ -143,20 +175,30 @@ class TouchpadWebSocketClient(
     }
 
     fun sendEvent(event: TouchOutEvent) {
-        val json = when (event) {
-            is TouchOutEvent.Move -> JSONObject()
-                .put("type", "move").put("dx", event.dx).put("dy", event.dy)
-
-            is TouchOutEvent.Click -> JSONObject()
-                .put("type", "click").put("button", event.button).put("action", event.action)
-
-            is TouchOutEvent.Scroll -> JSONObject()
-                .put("type", "scroll").put("dy", event.dy)
-
-            is TouchOutEvent.Gesture -> JSONObject()
-                .put("type", "gesture").put("name", event.name).put("direction", event.direction)
+        // 【核心效能優化】：使用原生字串模板替換高頻率使用的 JSONObject。
+        // 這避免了在 100Hz 高頻發送位移時不斷觸發記憶體垃圾回收(GC)，徹底移除了 Android 手機端的微小幀延遲。
+        val jsonStr = when (event) {
+            is TouchOutEvent.Move ->
+                """{"type":"move","dx":${event.dx},"dy":${event.dy}}"""
+            is TouchOutEvent.Click ->
+                """{"type":"click","button":"${event.button}","action":"${event.action}"}"""
+            is TouchOutEvent.Scroll ->
+                """{"type":"scroll","dy":${event.dy}}"""
+            is TouchOutEvent.Gesture ->
+                """{"type":"gesture","name":"${event.name}","direction":"${event.direction}"}"""
         }
-        send(json)
+
+        val activeWs = ws
+        if (activeWs != null) {
+            val success = activeWs.send(jsonStr)
+            if (!success) {
+                Log.w("WS_CLIENT", "資料發送失敗，主動判定為連線中斷")
+                close()
+                mainHandler.post { onStateChange(ConnState.DISCONNECTED) }
+            }
+        } else {
+            Log.w("WS_CLIENT", "嘗試發送資料，但 WebSocket 目前未連線")
+        }
     }
 
     fun sendText(value: String) {
