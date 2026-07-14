@@ -1,0 +1,32 @@
+# --- Android Studio & Gradle ---
+.gradle/
+build/
+app/build/
+*.iml
+.idea/
+local.properties
+.navigation/
+captures/
+.externalNativeBuild/
+.cxx/
+/build
+
+# --- Python ---
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+pip-log.txt
+pip-delete-this-directory.txt
+server_config.json
+
+# --- OS temporary files ---
+.DS_Store
+Thumbs.db
+
+# --- Android Studio crash dumps ---
+*.hprof

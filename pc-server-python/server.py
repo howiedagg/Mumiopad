@@ -1,0 +1,428 @@
+"""
+VR Touchpad - PC 端接收伺服器（UUID 極簡零配置版）
+"""
+
+import asyncio
+import json
+import random
+import socket
+import string
+import sys
+import uuid
+from pathlib import Path
+import threading
+
+import ctypes
+import websockets
+from pynput.mouse import Controller as MouseController, Button
+from pynput.keyboard import Controller as KeyboardController, Key
+from zeroconf import ServiceInfo
+from zeroconf.asyncio import AsyncZeroconf
+
+import pystray
+from PIL import Image, ImageDraw
+
+if sys.platform == "win32":
+    import winreg
+
+HOST = "0.0.0.0"
+PORT = 8765
+CONFIG_FILE = Path(__file__).parent / "server_config.json"
+
+mouse = MouseController()
+keyboard = KeyboardController()
+
+IS_WINDOWS = sys.platform == "win32"
+REG_RUN_PATH = r"Software\Microsoft\Windows\CurrentVersion\Run"
+REG_APP_NAME = "VRTouchpadServer"
+
+SPECIAL_KEYS = {
+    "ESC": Key.esc,
+    "ENTER": Key.enter,
+    "BACKSPACE": Key.backspace,
+    "TAB": Key.tab,
+    "CTRL": Key.ctrl,
+    "ALT": Key.alt,
+    "WIN": Key.cmd,
+    "UP": Key.up,
+    "DOWN": Key.down,
+    "LEFT": Key.left,
+    "RIGHT": Key.right,
+}
+
+loop = None  
+tray_icon = None
+console_visible = True
+
+# --- 核心資料管理：持久化 UUID 與授權設備 Token ---
+def load_config() -> dict:
+    if CONFIG_FILE.exists():
+        try:
+            data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+            if "server_uuid" in data and "authorized_tokens" in data:
+                return data
+        except Exception:
+            pass
+    
+    # 首次啟動：自動初始化
+    new_config = {
+        "server_uuid": str(uuid.uuid4()),
+        "authorized_tokens": []
+    }
+    save_config(new_config)
+    return new_config
+
+def save_config(config: dict):
+    CONFIG_FILE.write_text(json.dumps(config, indent=2, ensure_ascii=False), encoding="utf-8")
+
+def add_device_token(token: str, device_name: str):
+    config = load_config()
+    if not any(t["token"] == token for t in config["authorized_tokens"]):
+        config["authorized_tokens"].append({"token": token, "name": device_name})
+        save_config(config)
+
+def remove_device_token(token: str):
+    config = load_config()
+    config["authorized_tokens"] = [t for t in config["authorized_tokens"] if t["token"] != token]
+    save_config(config)
+
+def clear_all_pairings():
+    config = load_config()
+    config["authorized_tokens"] = []
+    save_config(config)
+    print("已清除所有配對紀錄！")
+    update_tray_menu()
+
+# 初始化配置
+server_config = load_config()
+SERVER_UUID = server_config["server_uuid"]
+
+class ServerState:
+    def __init__(self):
+        self.pending_pair_code = "".join(random.choices(string.digits, k=6))
+        self.active_connections = set()
+
+state = ServerState()
+
+def get_lan_ip() -> str:
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(("8.8.8.8", 80))
+        return s.getsockname()[0]
+    except Exception:
+        return "127.0.0.1"
+    finally:
+        s.close()
+
+# Windows 專用：控制 CMD 視窗顯示 or 隱藏
+def set_console_visibility(visible: bool):
+    global console_visible
+    console_visible = visible
+    if IS_WINDOWS:
+        hwnd = ctypes.windll.kernel32.GetConsoleWindow()
+        if hwnd:
+            ctypes.windll.user32.ShowWindow(hwnd, 5 if visible else 0)
+
+# 開機自啟動
+def is_startup_enabled() -> bool:
+    if not IS_WINDOWS:
+        return False
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, REG_RUN_PATH, 0, winreg.KEY_READ) as key:
+            winreg.QueryValueEx(key, REG_APP_NAME)
+            return True
+    except Exception:
+        return False
+
+def toggle_startup_setting():
+    if not IS_WINDOWS:
+        return
+    already_enabled = is_startup_enabled()
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, REG_RUN_PATH, 0, winreg.KEY_WRITE) as key:
+            if already_enabled:
+                winreg.DeleteValue(key, REG_APP_NAME)
+                print("開機自動啟動：已關閉")
+            else:
+                script_path = str(Path(__file__).resolve())
+                pythonw_exe = sys.executable.replace("python.exe", "pythonw.exe")
+                reg_cmd = f'"{pythonw_exe}" "{script_path}"'
+                winreg.SetValueEx(key, REG_APP_NAME, 0, winreg.REG_SZ, reg_cmd)
+                print("開機自動啟動：已開啟")
+        update_tray_menu()
+    except Exception as e:
+        print(f"切換開機啟動失敗: {e}")
+
+# 高效游標移動與實體點擊（Windows 平台優化）
+if IS_WINDOWS:
+    MOUSEEVENTF_MOVE = 0x0001
+    MOUSEEVENTF_LEFTDOWN = 0x0002
+    MOUSEEVENTF_LEFTUP = 0x0004
+    MOUSEEVENTF_RIGHTDOWN = 0x0008
+    MOUSEEVENTF_RIGHTUP = 0x0010
+
+    def apply_move(dx: float, dy: float):
+        ctypes.windll.user32.mouse_event(MOUSEEVENTF_MOVE, int(dx), int(dy), 0, 0)
+
+    def apply_click(button: str, action: str):
+        # 決定物理 Flag
+        if button == "left":
+            down_flag = MOUSEEVENTF_LEFTDOWN
+            up_flag = MOUSEEVENTF_LEFTUP
+        else:
+            down_flag = MOUSEEVENTF_RIGHTDOWN
+            up_flag = MOUSEEVENTF_RIGHTUP
+
+        if action == "click":
+            # 【極速優化】：使用 Win32 API 傳送 0ms 延遲的實體點擊訊號，繞過 pynput 的內部 sleep
+            ctypes.windll.user32.mouse_event(down_flag, 0, 0, 0, 0)
+            ctypes.windll.user32.mouse_event(up_flag, 0, 0, 0, 0)
+        elif action == "down":
+            ctypes.windll.user32.mouse_event(down_flag, 0, 0, 0, 0)
+        elif action == "up":
+            ctypes.windll.user32.mouse_event(up_flag, 0, 0, 0, 0)
+else:
+    # 非 Windows 平台（Mac/Linux）退回 pynput 處理
+    def apply_move(dx: float, dy: float):
+        mouse.move(dx, dy)
+
+    def apply_click(button: str, action: str):
+        btn = Button.left if button == "left" else Button.right
+        if action == "click":
+            mouse.click(btn, 1)
+        elif action == "down":
+            mouse.press(btn)
+        elif action == "up":
+            mouse.release(btn)
+
+# 滾動累加器
+accumulated_scroll_y = 0.0
+
+def apply_scroll(dy: float):
+    global accumulated_scroll_y
+    y_delta = -dy / 55.0
+    accumulated_scroll_y += y_delta
+    steps = int(accumulated_scroll_y)
+    if steps != 0:
+        accumulated_scroll_y -= steps
+        mouse.scroll(0, steps)
+
+def apply_text(value: str):
+    keyboard.type(value)
+
+def apply_keypress(key_name: str):
+    key = SPECIAL_KEYS.get(key_name)
+    if key:
+        keyboard.press(key)
+        keyboard.release(key)
+
+def apply_gesture(name: str, direction: str):
+    if name == "switch_desktop":
+        with keyboard.pressed(Key.ctrl, Key.cmd):
+            if direction == "left":
+                keyboard.press(Key.left)
+                keyboard.release(Key.left)
+            elif direction == "right":
+                keyboard.press(Key.right)
+                keyboard.release(Key.right)
+
+async def handle_event(msg: dict):
+    t = msg.get("type")
+    if t == "move":
+        apply_move(msg.get("dx", 0), msg.get("dy", 0))
+    elif t == "click":
+        apply_click(msg.get("button", "left"), msg.get("action", "click"))
+    elif t == "scroll":
+        apply_scroll(msg.get("dy", 0))
+    elif t == "text":
+        apply_text(msg.get("value", ""))
+    elif t == "keypress":
+        apply_keypress(msg.get("key", ""))
+    elif t == "gesture":
+        apply_gesture(msg.get("name", ""), msg.get("direction", ""))
+
+async def handler(websocket):
+    authed = False
+    current_token = None
+    peer = websocket.remote_address
+    state.active_connections.add(websocket)
+    print(f"新連線要求: {peer}")
+
+    try:
+        async for raw in websocket:
+            try:
+                msg = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+
+            t = msg.get("type")
+
+            if not authed:
+                if t == "pair_request":
+                    code = msg.get("code")
+                    if state.pending_pair_code and code == state.pending_pair_code:
+                        new_token = str(uuid.uuid4())
+                        device_name = msg.get("device_name", f"Device-{peer[0]}")
+                        
+                        add_device_token(new_token, device_name)
+                        authed = True
+                        current_token = new_token
+                        
+                        await websocket.send(json.dumps({
+                            "type": "pair_success", 
+                            "token": new_token,
+                            "server_uuid": SERVER_UUID,
+                            "pc_name": socket.gethostname()
+                        }))
+                        print(f"配對成功！設備: '{device_name}' 已註冊")
+                        update_tray_menu()
+                    else:
+                        await websocket.send(json.dumps({"type": "pair_fail", "reason": "invalid_code"}))
+                
+                elif t == "auth":
+                    token = msg.get("token")
+                    config = load_config()
+                    allowed_tokens = [x["token"] for x in config["authorized_tokens"]]
+                    if token in allowed_tokens:
+                        authed = True
+                        current_token = token
+                        await websocket.send(json.dumps({"type": "auth_ok"}))
+                        print(f"裝置通過憑證驗證，連線已建立")
+                    else:
+                        await websocket.send(json.dumps({"type": "auth_fail"}))
+                        await websocket.close()
+                        return
+                continue
+
+            if t == "ping":
+                await websocket.send(json.dumps({"type": "pong"}))
+                continue
+            
+            if t == "unpair":
+                if current_token:
+                    remove_device_token(current_token)
+                    print(f"裝置要求解除綁定，已將其憑證銷毀")
+                    update_tray_menu()
+                await websocket.close()
+                return
+
+            await handle_event(msg)
+    except websockets.exceptions.ConnectionClosed:
+        pass
+    finally:
+        state.active_connections.discard(websocket)
+        print(f"連線關閉: {peer}")
+
+def make_service_info(ip: str) -> ServiceInfo:
+    properties = {
+        "pc_name": socket.gethostname()
+    }
+    return ServiceInfo(
+        "_vrtouchpad._tcp.local.",
+        f"VRTouchpad_{SERVER_UUID}._vrtouchpad._tcp.local.",
+        addresses=[socket.inet_aton(ip)],
+        port=PORT,
+        properties=properties,
+    )
+
+def create_icon_image():
+    image = Image.new('RGB', (64, 64), color=(30, 30, 30))
+    d = ImageDraw.Draw(image)
+    d.rectangle([(8, 8), (56, 56)], outline=(30, 144, 255), width=4)
+    d.ellipse([(26, 26), (38, 38)], fill=(0, 191, 255))
+    return image
+
+def refresh_pair_code():
+    state.pending_pair_code = "".join(random.choices(string.digits, k=6))
+    print(f"已更換新配對碼：{state.pending_pair_code}")
+    update_tray_menu()
+
+def update_tray_menu():
+    global tray_icon
+    if not tray_icon:
+        return
+
+    ip = get_lan_ip()
+    paired_count = len(load_config()["authorized_tokens"])
+    
+    menu_items = [
+        pystray.MenuItem(f"IP: {ip}:{PORT}", action=None, enabled=False),
+        pystray.MenuItem(f"當前配對碼: {state.pending_pair_code}", action=None, enabled=False),
+        pystray.MenuItem(f"已信任裝置: {paired_count} 台", action=None, enabled=False),
+        pystray.MenuItem("重新產生配對碼", lambda: refresh_pair_code()),
+        pystray.MenuItem("清除所有歷史信任裝置", lambda: clear_all_pairings()),
+        pystray.Menu.SEPARATOR
+    ]
+    
+    if IS_WINDOWS:
+        menu_items.append(
+            pystray.MenuItem(
+                "開機自動啟動", 
+                action=lambda: toggle_startup_setting(),
+                checked=lambda item: is_startup_enabled()
+            )
+        )
+        
+    menu_items.extend([
+        pystray.MenuItem(
+            "顯示主控台" if not console_visible else "隱藏主控台",
+            lambda: set_console_visibility(not console_visible)
+        ),
+        pystray.Menu.SEPARATOR,
+        pystray.MenuItem("結束程式", on_exit_clicked)
+    ])
+
+    tray_icon.menu = pystray.Menu(*menu_items)
+
+def on_exit_clicked(icon, item):
+    global loop
+    print("正在關閉伺服器...")
+    icon.stop()
+    if loop:
+        asyncio.run_coroutine_threadsafe(shutdown_cleanly(), loop)
+
+async def shutdown_cleanly():
+    global loop
+    tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+    for task in tasks:
+        task.cancel()
+    await asyncio.gather(*tasks, return_exceptions=True)
+    if loop:
+        loop.stop()
+
+def run_tray_icon():
+    global tray_icon
+    icon_img = create_icon_image()
+    tray_icon = pystray.Icon("VRTouchpad", icon_img, "VR Touchpad Server")
+    update_tray_menu()
+    set_console_visibility(False)
+    tray_thread = threading.Thread(target=tray_icon.run)
+    tray_thread.start()
+
+async def main():
+    global loop
+    loop = asyncio.get_running_loop()
+    ip = get_lan_ip()
+    print(f"監聽 IP: {ip}:{PORT}")
+
+    azc = AsyncZeroconf()
+    mdns_info = make_service_info(ip)
+    await azc.async_register_service(mdns_info)
+    print("mDNS 區域網路探索廣播已啟動")
+
+    run_tray_icon()
+
+    try:
+        async with websockets.serve(handler, HOST, PORT):
+            await asyncio.Future()
+    except asyncio.CancelledError:
+        pass
+    finally:
+        await azc.async_unregister_service(mdns_info)
+        await azc.async_close()
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        sys.exit(0)

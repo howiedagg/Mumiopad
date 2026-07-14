@@ -1,0 +1,5 @@
+websockets
+pynput
+zeroconf
+pystray
+pillow
