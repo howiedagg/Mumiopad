@@ -5,6 +5,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.abs
+import kotlin.math.max
 import kotlin.math.sqrt
 
 sealed class TouchOutEvent {
@@ -12,11 +13,13 @@ sealed class TouchOutEvent {
     data class Click(val button: String, val action: String) : TouchOutEvent()
     data class Scroll(val dy: Float) : TouchOutEvent()
     data class Gesture(val name: String, val direction: String) : TouchOutEvent()
+    data class Keypress(val key: String) : TouchOutEvent() // 新增鍵盤快捷鍵事件
 }
 
 enum class LocalFeedbackType {
     PRESS_LOCK,
-    RELEASE_LOCK
+    RELEASE_LOCK,
+    TICK // 新增：輕微單次觸發提示
 }
 
 class GestureEngine(
@@ -29,14 +32,15 @@ class GestureEngine(
     private val slopPx = 8f * density
     private val stillPx = 10f * density
     private val scrollActivationSlopPx = 32f * density
-    private val swipeThresholdPx = 48f * density // 三指滑動門檻，防止輕微手震誤觸
+    private val swipeThresholdPx = 48f * density
 
     private val emitIntervalMs = 10L
     private val multiTapWindowMs = 120L
     private val tapTimeoutMs = 280L
 
     private enum class Mode {
-        IDLE, MOVE, PREDRAG_WAIT, DRAG, TWO_FINGER_WAIT, SCROLL, THREE_FINGER
+        IDLE, MOVE, PREDRAG_WAIT, DRAG, TWO_FINGER_WAIT,
+        SCROLL_VERTICAL, SWIPE_HORIZONTAL, THREE_FINGER
     }
 
     private data class Pointer(
@@ -67,7 +71,9 @@ class GestureEngine(
     private var accumulatedDragDy = 0f
     private var accumulatedScrollDy = 0f
 
-    // 三指手勢專用狀態變數
+    // 雙指水平手勢專用狀態變數
+    private var horizontalSwipeTriggered = false
+
     private var threeFingerStartY = 0f
     private var threeFingerSwiped = false
 
@@ -114,18 +120,11 @@ class GestureEngine(
 
                 accumulatedScrollDy = 0f
                 lastEmitTime = System.currentTimeMillis()
-
-                val p1 = pointers.values.elementAtOrNull(0)
-                val p2 = pointers.values.elementAtOrNull(1)
-                if (p1 != null && p2 != null) {
-                    lastScrollY = (p1.y + p2.y) / 2
-                }
             }
             3 -> {
                 mode = Mode.THREE_FINGER
                 transitionedFromMultiTouch = true
 
-                // 記錄三指初次按下的平均 Y 座標
                 val p1 = pointers.values.elementAtOrNull(0)
                 val p2 = pointers.values.elementAtOrNull(1)
                 val p3 = pointers.values.elementAtOrNull(2)
@@ -191,19 +190,32 @@ class GestureEngine(
                 val p1 = pointers.values.elementAtOrNull(0)
                 val p2 = pointers.values.elementAtOrNull(1)
                 if (p1 != null && p2 != null) {
+                    val currentAvgX = (p1.x + p2.x) / 2
                     val currentAvgY = (p1.y + p2.y) / 2
+                    val startAvgX = (p1.startX + p2.startX) / 2
                     val startAvgY = (p1.startY + p2.startY) / 2
 
-                    if (abs(currentAvgY - startAvgY) >= scrollActivationSlopPx) {
-                        mode = Mode.SCROLL
+                    val deltaX = currentAvgX - startAvgX
+                    val deltaY = currentAvgY - startAvgY
+
+                    // 【核心邏輯】：跨過死區時，判斷 X 軸還是 Y 軸位移較大來鎖定方向
+                    if (max(abs(deltaX), abs(deltaY)) >= scrollActivationSlopPx) {
                         rightClickCandidate = false
-                        catchupSmoother.start(currentAvgY - startAvgY)
-                        lastScrollY = currentAvgY
+                        if (abs(deltaY) > abs(deltaX)) {
+                            // 鎖定為上下滾動
+                            mode = Mode.SCROLL_VERTICAL
+                            catchupSmoother.start(deltaY)
+                            lastScrollY = currentAvgY
+                        } else {
+                            // 鎖定為左右導覽
+                            mode = Mode.SWIPE_HORIZONTAL
+                            horizontalSwipeTriggered = false
+                        }
                     }
                 }
             }
 
-            Mode.SCROLL -> {
+            Mode.SCROLL_VERTICAL -> {
                 val p1 = pointers.values.elementAtOrNull(0)
                 val p2 = pointers.values.elementAtOrNull(1)
                 if (p1 != null && p2 != null) {
@@ -221,8 +233,30 @@ class GestureEngine(
                 }
             }
 
+            Mode.SWIPE_HORIZONTAL -> {
+                val p1 = pointers.values.elementAtOrNull(0)
+                val p2 = pointers.values.elementAtOrNull(1)
+                // 只有在還未觸發時才進行判定（單次觸發鎖定）
+                if (p1 != null && p2 != null && !horizontalSwipeTriggered) {
+                    val currentAvgX = (p1.x + p2.x) / 2
+                    val startAvgX = (p1.startX + p2.startX) / 2
+                    val deltaX = currentAvgX - startAvgX
+
+                    if (deltaX >= swipeThresholdPx) {
+                        // 往右滑：上一頁
+                        emit(TouchOutEvent.Keypress("BROWSER_BACK"))
+                        horizontalSwipeTriggered = true
+                        onLocalFeedback(LocalFeedbackType.TICK)
+                    } else if (deltaX <= -swipeThresholdPx) {
+                        // 往左滑：下一頁
+                        emit(TouchOutEvent.Keypress("BROWSER_FORWARD"))
+                        horizontalSwipeTriggered = true
+                        onLocalFeedback(LocalFeedbackType.TICK)
+                    }
+                }
+            }
+
             Mode.THREE_FINGER -> {
-                // 三指移動時，計算平均垂直位移來判定手勢
                 if (!threeFingerSwiped) {
                     val p1 = pointers.values.elementAtOrNull(0)
                     val p2 = pointers.values.elementAtOrNull(1)
@@ -232,11 +266,9 @@ class GestureEngine(
                         val deltaY = currentAvgY - threeFingerStartY
 
                         if (deltaY >= swipeThresholdPx) {
-                            // 下滑：回桌面
                             threeFingerSwiped = true
                             emit(TouchOutEvent.Gesture("desktop", "down"))
                         } else if (deltaY <= -swipeThresholdPx) {
-                            // 上滑：還原視窗
                             threeFingerSwiped = true
                             emit(TouchOutEvent.Gesture("desktop", "up"))
                         }
@@ -293,15 +325,18 @@ class GestureEngine(
                 }
             }
 
-            Mode.SCROLL -> {
+            Mode.SCROLL_VERTICAL -> {
                 catchupSmoother.cancel()
                 if (abs(accumulatedScrollDy) > 0.1f) {
                     emit(TouchOutEvent.Scroll(accumulatedScrollDy))
                 }
             }
 
+            Mode.SWIPE_HORIZONTAL -> {
+                // 放開手指不做額外操作，等待下一次手勢重置
+            }
+
             Mode.THREE_FINGER -> {
-                // 【關鍵修復】：若期間完全未觸發過滑動手勢，且手指位移在容差內，才判定為「三指點擊」
                 if (!threeFingerSwiped && dist(p) < slopPx * 2f) {
                     emit(TouchOutEvent.Gesture("multitask", "tap"))
                 }
@@ -318,7 +353,8 @@ class GestureEngine(
             firstFingerId = null
             dragging = false
             transitionedFromMultiTouch = false
-            threeFingerSwiped = false // 重置狀態
+            horizontalSwipeTriggered = false
+            threeFingerSwiped = false
         } else if (pointers.size == 1) {
             val remainingId = pointers.keys.first()
             val remainingPointer = pointers[remainingId]
@@ -350,6 +386,7 @@ class GestureEngine(
         accumulatedDragDx = 0f
         accumulatedDragDy = 0f
         accumulatedScrollDy = 0f
+        horizontalSwipeTriggered = false
         threeFingerStartY = 0f
         threeFingerSwiped = false
     }

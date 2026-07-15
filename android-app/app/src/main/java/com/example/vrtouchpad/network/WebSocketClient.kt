@@ -179,6 +179,8 @@ class TouchpadWebSocketClient(
                 """{"type":"scroll","dy":${event.dy}}"""
             is TouchOutEvent.Gesture ->
                 """{"type":"gesture","name":"${event.name}","direction":"${event.direction}"}"""
+            is TouchOutEvent.Keypress ->
+                """{"type":"keypress","key":"${event.key}"}""" // 新增處理 Keypress
         }
 
         val activeWs = ws

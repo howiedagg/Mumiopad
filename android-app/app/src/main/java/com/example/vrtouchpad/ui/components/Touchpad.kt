@@ -29,7 +29,7 @@ fun Touchpad(
     onOutEvent: (TouchOutEvent) -> Unit,
 ) {
     val density = LocalDensity.current.density
-    val view = LocalView.current // 獲取當前 View 用於執行低延遲系統級觸覺回饋
+    val view = LocalView.current
 
     val currentMouseSpeed by rememberUpdatedState(mouseSpeed)
     val currentScrollSpeed by rememberUpdatedState(scrollSpeed)
@@ -55,7 +55,6 @@ fun Touchpad(
                 currentOnOutEvent(scaled)
             },
             onLocalFeedback = { type ->
-                // 使用低延遲且免宣告 VIBRATE 權限的 performHapticFeedback 執行震動
                 val constant = when (type) {
                     LocalFeedbackType.PRESS_LOCK -> {
                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
@@ -71,8 +70,15 @@ fun Touchpad(
                             HapticFeedbackConstants.VIRTUAL_KEY_RELEASE
                         }
                     }
+                    LocalFeedbackType.TICK -> {
+                        // 【修改】：將過於微弱的 Tick 升級為力道明確的實體確認感
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                            HapticFeedbackConstants.CONFIRM // 現代化、有質感的「成功觸發」回饋
+                        } else {
+                            HapticFeedbackConstants.VIRTUAL_KEY // 經典的實體虛擬按鍵力道
+                        }
+                    }
                 }
-                // 執行微擬真物理開關觸感
                 view.performHapticFeedback(constant)
             }
         )
