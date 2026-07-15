@@ -27,6 +27,7 @@ fun Touchpad(
     reverseScroll: Boolean,
     scope: CoroutineScope,
     onOutEvent: (TouchOutEvent) -> Unit,
+    onToggleKeyboard: () -> Unit, // 【新增】：外部傳入的鍵盤開關控制
 ) {
     val density = LocalDensity.current.density
     val view = LocalView.current
@@ -36,6 +37,7 @@ fun Touchpad(
     val currentReverseScroll by rememberUpdatedState(reverseScroll)
 
     val currentOnOutEvent by rememberUpdatedState(onOutEvent)
+    val currentOnToggleKeyboard by rememberUpdatedState(onToggleKeyboard)
 
     val engine = remember(scope, density) {
         GestureEngine(
@@ -71,16 +73,16 @@ fun Touchpad(
                         }
                     }
                     LocalFeedbackType.TICK -> {
-                        // 【修改】：將過於微弱的 Tick 升級為力道明確的實體確認感
                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                            HapticFeedbackConstants.CONFIRM // 現代化、有質感的「成功觸發」回饋
+                            HapticFeedbackConstants.CONFIRM
                         } else {
-                            HapticFeedbackConstants.VIRTUAL_KEY // 經典的實體虛擬按鍵力道
+                            HapticFeedbackConstants.VIRTUAL_KEY
                         }
                     }
                 }
                 view.performHapticFeedback(constant)
-            }
+            },
+            onToggleKeyboard = { currentOnToggleKeyboard() } // 【綁定】：呼叫 ViewModel 的控制
         )
     }
 

@@ -13,13 +13,13 @@ sealed class TouchOutEvent {
     data class Click(val button: String, val action: String) : TouchOutEvent()
     data class Scroll(val dy: Float) : TouchOutEvent()
     data class Gesture(val name: String, val direction: String) : TouchOutEvent()
-    data class Keypress(val key: String) : TouchOutEvent() // 新增鍵盤快捷鍵事件
+    data class Keypress(val key: String) : TouchOutEvent()
 }
 
 enum class LocalFeedbackType {
     PRESS_LOCK,
     RELEASE_LOCK,
-    TICK // 新增：輕微單次觸發提示
+    TICK
 }
 
 class GestureEngine(
@@ -27,7 +27,8 @@ class GestureEngine(
     density: Float,
     private val longPressMs: Long = 200,
     private val emit: (TouchOutEvent) -> Unit,
-    private val onLocalFeedback: (LocalFeedbackType) -> Unit = {}
+    private val onLocalFeedback: (LocalFeedbackType) -> Unit = {},
+    private val onToggleKeyboard: () -> Unit = {} // 【新增】：四指觸發的本地鍵盤開關回呼
 ) {
     private val slopPx = 8f * density
     private val stillPx = 10f * density
@@ -40,7 +41,7 @@ class GestureEngine(
 
     private enum class Mode {
         IDLE, MOVE, PREDRAG_WAIT, DRAG, TWO_FINGER_WAIT,
-        SCROLL_VERTICAL, SWIPE_HORIZONTAL, THREE_FINGER
+        SCROLL_VERTICAL, SWIPE_HORIZONTAL, THREE_FINGER, FOUR_FINGER // 【新增】：FOUR_FINGER
     }
 
     private data class Pointer(
@@ -71,7 +72,6 @@ class GestureEngine(
     private var accumulatedDragDy = 0f
     private var accumulatedScrollDy = 0f
 
-    // 雙指水平手勢專用狀態變數
     private var horizontalSwipeTriggered = false
 
     private var threeFingerStartY = 0f
@@ -132,6 +132,11 @@ class GestureEngine(
                     threeFingerStartY = (p1.y + p2.y + p3.y) / 3f
                 }
                 threeFingerSwiped = false
+            }
+            4 -> {
+                // 【新增】：四根手指放上時，直接進入四指模式
+                mode = Mode.FOUR_FINGER
+                transitionedFromMultiTouch = true
             }
         }
     }
@@ -198,16 +203,13 @@ class GestureEngine(
                     val deltaX = currentAvgX - startAvgX
                     val deltaY = currentAvgY - startAvgY
 
-                    // 【核心邏輯】：跨過死區時，判斷 X 軸還是 Y 軸位移較大來鎖定方向
                     if (max(abs(deltaX), abs(deltaY)) >= scrollActivationSlopPx) {
                         rightClickCandidate = false
                         if (abs(deltaY) > abs(deltaX)) {
-                            // 鎖定為上下滾動
                             mode = Mode.SCROLL_VERTICAL
                             catchupSmoother.start(deltaY)
                             lastScrollY = currentAvgY
                         } else {
-                            // 鎖定為左右導覽
                             mode = Mode.SWIPE_HORIZONTAL
                             horizontalSwipeTriggered = false
                         }
@@ -236,19 +238,16 @@ class GestureEngine(
             Mode.SWIPE_HORIZONTAL -> {
                 val p1 = pointers.values.elementAtOrNull(0)
                 val p2 = pointers.values.elementAtOrNull(1)
-                // 只有在還未觸發時才進行判定（單次觸發鎖定）
                 if (p1 != null && p2 != null && !horizontalSwipeTriggered) {
                     val currentAvgX = (p1.x + p2.x) / 2
                     val startAvgX = (p1.startX + p2.startX) / 2
                     val deltaX = currentAvgX - startAvgX
 
                     if (deltaX >= swipeThresholdPx) {
-                        // 往右滑：上一頁
                         emit(TouchOutEvent.Keypress("BROWSER_BACK"))
                         horizontalSwipeTriggered = true
                         onLocalFeedback(LocalFeedbackType.TICK)
                     } else if (deltaX <= -swipeThresholdPx) {
-                        // 往左滑：下一頁
                         emit(TouchOutEvent.Keypress("BROWSER_FORWARD"))
                         horizontalSwipeTriggered = true
                         onLocalFeedback(LocalFeedbackType.TICK)
@@ -276,7 +275,7 @@ class GestureEngine(
                 }
             }
 
-            Mode.IDLE -> Unit
+            Mode.FOUR_FINGER, Mode.IDLE -> Unit
         }
     }
 
@@ -332,13 +331,20 @@ class GestureEngine(
                 }
             }
 
-            Mode.SWIPE_HORIZONTAL -> {
-                // 放開手指不做額外操作，等待下一次手勢重置
-            }
+            Mode.SWIPE_HORIZONTAL -> { }
 
             Mode.THREE_FINGER -> {
                 if (!threeFingerSwiped && dist(p) < slopPx * 2f) {
                     emit(TouchOutEvent.Gesture("multitask", "tap"))
+                }
+                mode = Mode.IDLE
+            }
+
+            // 【新增】：四指放開時，判斷是否在容錯範圍內（給3倍容忍度，因為四指擠壓容易位移）
+            Mode.FOUR_FINGER -> {
+                if (dist(p) < slopPx * 3f) {
+                    onLocalFeedback(LocalFeedbackType.TICK) // 震動優先：在 View 失去焦點前確保成功觸發
+                    onToggleKeyboard() // 隨後開啟鍵盤
                 }
                 mode = Mode.IDLE
             }

@@ -152,6 +152,7 @@ fun AppRoot(viewModel: TouchpadViewModel) {
                     reverseScroll = reverseScroll,
                     scope = scope,
                     onOutEvent = { viewModel.wsClient.sendEvent(it) },
+                    onToggleKeyboard = { viewModel.toggleKeyboard() }
                 )
             }
         }
