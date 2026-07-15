@@ -10,7 +10,7 @@ By establishing a direct local connection, Mumiopad delivers low-latency input e
 
 ## 📥 Quick Start (How to Download & Connect)
 
-Please head to the 👉 **[Mumiopad Latest Releases Page](https://github.com/YOUR_GITHUB_USERNAME/YOUR_PROJECT_NAME/releases)** to download the pre-built files:
+Please head to the 👉 **[Mumiopad Latest Releases Page](https://github.com/howiedagg/Mumiopad/releases)** to download the pre-built files:
 
 ### 1. Computer Setup (Windows)
 *   On the releases page, click and download `MumiopadServer-vx.x.x.exe`.
@@ -95,4 +95,4 @@ The compiled APK will be located at `android-app/app/build/outputs/apk/debug/app
 
 ## 💬 Feedback
 
-If you encounter any bugs or have feature suggestions, please feel free to open an issue at [GitHub Issues](https://github.com/YOUR_GITHUB_USERNAME/YOUR_PROJECT_NAME/issues). Your feedback is highly appreciated!
+If you encounter any bugs or have feature suggestions, please feel free to open an issue at [GitHub Issues](https://github.com/howiedagg/Mumiopad/issues). Your feedback is highly appreciated!
