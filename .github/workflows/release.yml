@@ -10,7 +10,7 @@ on:
       changelog:
         description: '更新日誌 (輸入 \n 來進行圓點換行)'
         required: true
-        default: '- 修正已知問題 \n - 優化效能與連線穩定度'
+        default: '- Fixed known issues \n - Optimize performance'
 
 jobs:
   # 任務一：自動解析或計算版本號
