@@ -10,7 +10,7 @@ By establishing a direct local connection, Mumiopad delivers low-latency input e
 
 ## 📥 Quick Start (How to Download & Connect)
 
-Please head to the 👉 **[Mumiopad Latest Releases Page](https://github.com/howiedagg/Mumiopad/releases)** to download the pre-built files:
+Please head to the 👉 **[Mumiopad Latest Releases Page](https://github.com/YOUR_GITHUB_USERNAME/YOUR_PROJECT_NAME/releases)** to download the pre-built files:
 
 ### 1. Computer Setup (Windows)
 *   On the releases page, click and download `MumiopadServer-vx.x.x.exe`.
@@ -55,25 +55,44 @@ You can tap the Gear icon in the top-right corner of the mobile app to customize
 
 ---
 
-<!-- Technical details are hidden here, so general users aren't overwhelmed, but developers can expand to read -->
-<details>
-<summary>🛠️ Developer Information & Technical Details (Click to Expand)</summary>
+## 🛠️ Build from Source
 
-### Technology Stack
-*   **Android App**: Kotlin, Jetpack Compose UI, OkHttp (WebSocket client), mDNS (Android NsdManager).
-*   **PC Server**: Python, websockets, pynput (OS-level input emulation), pystray (system tray interface).
+If you are a developer or want to modify and compile this project yourself, follow the steps below:
 
-### Decoupled Codebase Structure
-The project is built with modularity and extensibility in mind:
-*   `GestureEngine.kt` is a pure Kotlin gesture state machine independent of Android UI components. It dispatches gesture instructions and haptic triggers via clean callbacks, making it unit-testable.
-*   `ScrollCatchupSmoother.kt` distributes the initial dead-zone slop delta over smooth ticks to eliminate scrolling latency.
-*   `WifiPerformanceManager.kt` acquires a full low-latency Wi-Fi lock (`WIFI_MODE_FULL_LOW_LATENCY`) during active connections to prevent micro-stuttering caused by mobile chipsets entering power-saving modes.
-
-### Manual Server Environment Setup (For Debugging)
-If you wish to run the server from source code:
+### 1. PC Server (Python)
+Ensure Python 3.10+ is installed on your machine:
 ```bash
 cd pc-server-python
 python -m venv .venv
 source .venv/bin/activate  # On Windows run: .venv\Scripts\activate
 pip install -r requirements.txt
 python server.py
+```
+To compile the standalone `.exe` without console yourself:
+```bash
+pyinstaller --onefile --noconsole --name MumiopadServer server.py
+```
+
+### 2. Android App (Kotlin/Compose)
+1. Open the `android-app` folder with **Android Studio**.
+2. Ensure JDK 17 is configured.
+3. Build the APK using the terminal:
+```bash
+cd android-app
+./gradlew assembleDebug
+```
+The compiled APK will be located at `android-app/app/build/outputs/apk/debug/app-debug.apk`.
+
+---
+
+## 📄 License & Disclaimer
+
+*   **Non-Commercial Use Only**:
+    *   The source code of this project and all compiled binaries (APK and EXE files) are free to use for **personal, educational, and non-commercial purposes only**.
+    *   **Any commercial use, resale, paid unlocking, or commercial bundling of this software is strictly prohibited.**
+*   **Safety Notice**: Since this software simulates mouse and keyboard inputs, we highly recommend using it only within trusted local Wi-Fi networks.
+*   **Disclaimer**: This software is provided "as is" without warranty of any kind. The author is not responsible for any damage, system conflicts, or data loss caused by using this application.
+
+## 💬 Feedback
+
+If you encounter any bugs or have feature suggestions, please feel free to open an issue at [GitHub Issues](https://github.com/YOUR_GITHUB_USERNAME/YOUR_PROJECT_NAME/issues). Your feedback is highly appreciated!
