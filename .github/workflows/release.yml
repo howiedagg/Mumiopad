@@ -11,8 +11,8 @@ on:
         description: '更新日誌 (支援 Markdown，可列點說明)'
         required: true
         default: |
-          - Fixed known issues
-          - Optimize performance and connection
+          - 修正已知問題
+          - 優化效能與連線穩定度
 
 jobs:
   # 任務一：自動解析或計算版本號
@@ -37,7 +37,8 @@ jobs:
             echo "偵測到目前的最新版本號為: $LATEST_TAG"
             
             # 2. 使用 Python 解析並依「個位數滿 9 進位」規則自動 +1
-            NEXT_TAG=$(python3 -c "
+            NEXT_TAG=$(python3 <<'EOF'
+          import sys
           tag = '$LATEST_TAG'.lstrip('v')
           try:
               parts = list(map(int, tag.split('.')))
@@ -52,11 +53,15 @@ jobs:
               if parts[1] > 9:
                   parts[1] = 0
                   parts[0] += 1
-          print(f'v{parts[0]}.{parts[1]}.{parts[2]}')
-            ")
+          print(f"v{parts[0]}.{parts[1]}.{parts[2]}")
+          EOF
+            )
+            
+            # 去除可能帶有的前後空白
+            NEXT_TAG=$(echo "$NEXT_TAG" | tr -d '[:space:]')
             echo "自動計算出下一個版本號為: $NEXT_TAG"
             echo "version=$NEXT_TAG" >> $GITHUB_OUTPUT
-          else:
+          else
             # 3. 使用者手動輸入，確保有補上 v 開頭
             if [[ ! "$INPUT_VER" =~ ^v ]]; then
               INPUT_VER="v$INPUT_VER"
