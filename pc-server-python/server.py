@@ -1,5 +1,5 @@
 """
-VR Touchpad - PC 端接收伺服器（一鍵授權極簡版）
+VR Touchpad - PC 端接收伺服器（輕量重構版）
 """
 
 import asyncio
@@ -60,7 +60,6 @@ SPECIAL_KEYS = {
 
 loop = None  
 tray_icon = None
-console_visible = True
 
 # --- 核心資料管理：持久化 UUID 與授權設備 Token ---
 def load_config() -> dict:
@@ -97,7 +96,7 @@ def clear_all_pairings():
     config = load_config()
     config["authorized_tokens"] = []
     save_config(config)
-    print("已清除所有配對紀錄！")
+    print("已清除所有配對紀錄")
     update_tray_menu()
 
 # 初始化配置
@@ -119,15 +118,6 @@ def get_lan_ip() -> str:
         return "127.0.0.1"
     finally:
         s.close()
-
-# Windows 專用：控制 CMD 視窗顯示 or 隱藏
-def set_console_visibility(visible: bool):
-    global console_visible
-    if IS_WINDOWS:
-        hwnd = ctypes.windll.kernel32.GetConsoleWindow()
-        if hwnd:
-            ctypes.windll.user32.ShowWindow(hwnd, 5 if visible else 0)
-    console_visible = visible
 
 # 開機自啟動
 def is_startup_enabled() -> bool:
@@ -386,7 +376,6 @@ def apply_gesture(name: str, direction: str):
             keyboard.release(Key.tab)
     elif name == "desktop":
         if direction in ["down", "up"]:
-            # Windows 顯示桌面 / 還原視窗快速鍵：Win + D
             with keyboard.pressed(Key.cmd):
                 keyboard.press('d')
                 keyboard.release('d')
@@ -408,7 +397,6 @@ async def handle_event(msg: dict):
 
 # --- 彈出式配對詢問對話框（Win32） ---
 def show_pairing_dialog_windows(device_name: str) -> bool:
-    # MB_YESNO (0x4) | MB_ICONQUESTION (0x20) | MB_TOPMOST (0x40000)
     result = ctypes.windll.user32.MessageBoxW(
         0, 
         f"裝置「{device_name}」請求配對並控制此電腦。\n\n是否允許配對？", 
@@ -423,8 +411,8 @@ def request_pairing_permission(device_name: str) -> bool:
             return show_pairing_dialog_windows(device_name)
         except Exception as e:
             print(f"無法顯示 Windows 配對視窗: {e}")
-            return True  # 異常時預設允許，防止流程中斷
-    return True  # 非 Windows 平台預設直接允許以維持簡化操作
+            return True
+    return True
 
 async def handler(websocket):
     authed = False
@@ -454,7 +442,6 @@ async def handler(websocket):
                     device_name = msg.get("device_name", f"Device-{peer[0]}")
                     print(f"收到來自「{device_name}」的配對請求，正在等待用戶授權...")
                     
-                    # 透過 to_thread 異步呼叫阻斷式對話框，不影響其他網路連線
                     allowed = await asyncio.to_thread(request_pairing_permission, device_name)
                     
                     if allowed:
@@ -530,18 +517,46 @@ def create_icon_image():
     d.ellipse([(26, 26), (38, 38)], fill=(0, 191, 255))
     return image
 
+# 單點刪除特定裝置並即時更新系統選單
+def remove_device_and_refresh(token: str):
+    remove_device_token(token)
+    print("已手動移除該信任裝置")
+    update_tray_menu()
+
 def update_tray_menu():
     global tray_icon
     if not tray_icon:
         return
 
-    ip = get_lan_ip()
-    paired_count = len(load_config()["authorized_tokens"])
+    config = load_config()
+    authorized_devices = config.get("authorized_tokens", [])
+    pc_name = socket.gethostname()
     
+    # 動態構建「已信任裝置」子選單
+    device_submenu_items = []
+    if not authorized_devices:
+        device_submenu_items.append(pystray.MenuItem("無信任裝置", action=None, enabled=False))
+    else:
+        for dev in authorized_devices:
+            token = dev["token"]
+            name = dev["name"]
+            device_submenu_items.append(
+                pystray.MenuItem(
+                    f"解除「{name}」", 
+                    action=lambda item, t=token: remove_device_and_refresh(t)
+                )
+            )
+        
+        # 【優化調整】：如果有名單，在最下方增加分隔線與「清除所有」選項
+        device_submenu_items.append(pystray.Menu.SEPARATOR)
+        device_submenu_items.append(
+            pystray.MenuItem("清除所有信任裝置", lambda item: clear_all_pairings())
+        )
+
+    # 主選單現在變得更加乾淨俐落
     menu_items = [
-        pystray.MenuItem(f"IP: {ip}:{PORT}", action=None, enabled=False),
-        pystray.MenuItem(f"已信任裝置: {paired_count} 台", action=None, enabled=False),
-        pystray.MenuItem("清除所有歷史信任裝置", lambda: clear_all_pairings()),
+        pystray.MenuItem(f"電腦名稱: {pc_name}", action=None, enabled=False),
+        pystray.MenuItem("已信任裝置", pystray.Menu(*device_submenu_items)),
         pystray.Menu.SEPARATOR
     ]
     
@@ -549,20 +564,13 @@ def update_tray_menu():
         menu_items.append(
             pystray.MenuItem(
                 "開機自動啟動", 
-                action=lambda: toggle_startup_setting(),
+                action=lambda item: toggle_startup_setting(),
                 checked=lambda item: is_startup_enabled()
             )
         )
+        menu_items.append(pystray.Menu.SEPARATOR)
         
-    menu_items.extend([
-        pystray.MenuItem(
-            "顯示主控台" if not console_visible else "隱藏主控台",
-            lambda: set_console_visibility(not console_visible)
-        ),
-        pystray.Menu.SEPARATOR,
-        pystray.MenuItem("結束程式", on_exit_clicked)
-    ])
-
+    menu_items.append(pystray.MenuItem("結束程式", on_exit_clicked))
     tray_icon.menu = pystray.Menu(*menu_items)
 
 def on_exit_clicked(icon, item):
@@ -586,7 +594,7 @@ def run_tray_icon():
     icon_img = create_icon_image()
     tray_icon = pystray.Icon("VRTouchpad", icon_img, "VR Touchpad Server")
     update_tray_menu()
-    set_console_visibility(False)
+    
     tray_thread = threading.Thread(target=tray_icon.run)
     tray_thread.start()
 
