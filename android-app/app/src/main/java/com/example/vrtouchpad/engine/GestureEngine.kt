@@ -22,7 +22,7 @@ class GestureEngine(
 ) {
     private val slopPx = 8f * density
     private val stillPx = 10f * density
-    private val scrollActivationSlopPx = 32f * density
+    private val scrollActivationSlopPx = 32f * density // 維持 32dp 不變，靠死區補償解決延遲感
 
     // 採樣時間窗口
     private val emitIntervalMs = 10L
@@ -60,6 +60,12 @@ class GestureEngine(
     private var accumulatedDragDx = 0f
     private var accumulatedDragDy = 0f
     private var accumulatedScrollDy = 0f
+
+    // 【修正】：死區補償平滑器，與狀態機邏輯解耦，只透過 callback 把補償位移
+    // 疊加進 accumulatedScrollDy，沿用原本既有的 emit 節流機制送出。
+    private val catchupSmoother = ScrollCatchupSmoother(scope) { delta ->
+        accumulatedScrollDy += delta
+    }
 
     fun onDown(id: Long, x: Float, y: Float) {
         pointers[id] = Pointer(x, y, x, y)
@@ -173,8 +179,16 @@ class GestureEngine(
                     if (abs(currentAvgY - startAvgY) >= scrollActivationSlopPx) {
                         mode = Mode.SCROLL
                         rightClickCandidate = false
+
+                        // 【修正】：核心 bug 修復。跨過門檻的瞬間，把「從雙指按下到現在」
+                        // 這段原本會被下面 lastScrollY 更新吃掉、從未送出的位移，
+                        // 透過 catchupSmoother 平滑補回去，消除「滑一段才開始捲動」的延遲感。
+                        // 32dp 門檻本身完全不變，只是不再讓這段位移憑空消失。
+                        catchupSmoother.start(currentAvgY - startAvgY)
+                        lastScrollY = currentAvgY
                     }
-                    lastScrollY = currentAvgY
+                    // 【修正】：移除原本無條件的 lastScrollY = currentAvgY。
+                    // 只有在真正切換到 SCROLL 模式那一刻才更新，避免死區內的位移被默默吃掉。
                 }
             }
 
@@ -244,6 +258,9 @@ class GestureEngine(
             }
 
             Mode.SCROLL -> {
+                // 【修正】：手指放開時若還有尚未跑完的補償動畫，立即中止，
+                // 避免放開後畫面還在殘留補償捲動、造成「鬆手後還在滑」的錯覺。
+                catchupSmoother.cancel()
                 if (abs(accumulatedScrollDy) > 0.1f) {
                     emit(TouchOutEvent.Scroll(accumulatedScrollDy))
                 }
@@ -289,6 +306,7 @@ class GestureEngine(
 
     fun reset() {
         longPressJob?.cancel()
+        catchupSmoother.cancel() // 【修正】：reset 時一併中止殘留的補償任務
         pointers.clear()
         mode = Mode.IDLE
         dragging = false
