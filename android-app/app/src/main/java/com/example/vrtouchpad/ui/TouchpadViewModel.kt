@@ -20,7 +20,7 @@ import kotlinx.coroutines.launch
 class TouchpadViewModel(context: Context) : ViewModel() {
     private val pairingManager = PairingManager(context)
     private val settingsStore = SettingsStore(context)
-    private val wifiPerformanceManager = WifiPerformanceManager(context) // 【新增】
+    private val wifiPerformanceManager = WifiPerformanceManager(context)
 
     private val _connState = MutableStateFlow(ConnState.DISCONNECTED)
     val connState: StateFlow<ConnState> = _connState
@@ -31,8 +31,9 @@ class TouchpadViewModel(context: Context) : ViewModel() {
     private val _savedServers = MutableStateFlow<List<SavedServer>>(emptyList())
     val savedServers: StateFlow<List<SavedServer>> = _savedServers
 
-    private val _showPairDialog = MutableStateFlow(false)
-    val showPairDialog: StateFlow<Boolean> = _showPairDialog
+    // 【修改】：以單一 sealed class 取代原本 showPairDialog + targetServerToPair 兩個旗標
+    private val _pairingNavState = MutableStateFlow<PairingNavState>(PairingNavState.Hidden)
+    val pairingNavState: StateFlow<PairingNavState> = _pairingNavState
 
     private val _isPairingBusy = MutableStateFlow(false)
     val isPairingBusy: StateFlow<Boolean> = _isPairingBusy
@@ -52,23 +53,22 @@ class TouchpadViewModel(context: Context) : ViewModel() {
     private val _scrollSpeed = MutableStateFlow(settingsStore.scrollSpeed)
     val scrollSpeed: StateFlow<Float> = _scrollSpeed
 
-    // 【新增】：反向滾動狀態流
     private val _reverseScroll = MutableStateFlow(settingsStore.reverseScroll)
     val reverseScroll: StateFlow<Boolean> = _reverseScroll
 
     private val _pairCodeInput = MutableStateFlow("")
     val pairCodeInput: StateFlow<String> = _pairCodeInput
 
-    private val _targetServerToPair = MutableStateFlow<DiscoveredServer?>(null)
-    val targetServerToPair: StateFlow<DiscoveredServer?> = _targetServerToPair
-
     private var isAppActive = true
     private var supervisorJob: Job? = null
+
+    // 【新增】：業務邏輯用來記住「正在配對哪一台」，與 UI 導覽狀態脫鉤，
+    // 避免 WebSocket callback 需要反查 pairingNavState 目前的值才能運作。
+    private var pendingPairServer: DiscoveredServer? = null
 
     val wsClient = TouchpadWebSocketClient(
         onStateChange = { state ->
             _connState.value = state
-            // 【新增】：連線建立時鎖定 WiFi 高效能模式，斷線時釋放
             if (state == ConnState.CONNECTED) {
                 wifiPerformanceManager.acquire()
             } else {
@@ -79,16 +79,16 @@ class TouchpadViewModel(context: Context) : ViewModel() {
             _isPairingBusy.value = false
             _pairingError.value = null
 
-            _targetServerToPair.value?.let { server ->
+            pendingPairServer?.let { server ->
                 pairingManager.saveServer(server.uuid, pcName, token)
                 pairingManager.setSelectedServerUuid(server.uuid)
             }
+            pendingPairServer = null
 
-            _targetServerToPair.value = null
             refreshServerLists()
             _connState.value = ConnState.CONNECTED
-            wifiPerformanceManager.acquire() // 【新增】：配對成功後同樣視為已連線
-            _showPairDialog.value = false
+            wifiPerformanceManager.acquire()
+            _pairingNavState.value = PairingNavState.Hidden
             _unpairedDiscovered.value = emptyList()
         },
         onPairFail = { reason ->
@@ -119,7 +119,7 @@ class TouchpadViewModel(context: Context) : ViewModel() {
             stopSupervisorLoop()
             wsClient.close()
             _connState.value = ConnState.DISCONNECTED
-            wifiPerformanceManager.release() // 【新增】
+            wifiPerformanceManager.release()
         }
     }
 
@@ -141,7 +141,6 @@ class TouchpadViewModel(context: Context) : ViewModel() {
         settingsStore.scrollSpeed = speed
     }
 
-    // 【新增】：更新反向滾動設定
     fun updateReverseScroll(reverse: Boolean) {
         _reverseScroll.value = reverse
         settingsStore.reverseScroll = reverse
@@ -151,16 +150,20 @@ class TouchpadViewModel(context: Context) : ViewModel() {
         _pairCodeInput.value = code
     }
 
+    // 【修改】：觸發配對＝切換到 EnteringCode 狀態，同時記錄 pendingPairServer 供 callback 使用
     fun triggerPairing(server: DiscoveredServer) {
-        _targetServerToPair.value = server
-        _pairingError.value = null
-        _showPairDialog.value = true
-    }
-
-    fun cancelPairing() {
-        _targetServerToPair.value = null
+        pendingPairServer = server
         _pairingError.value = null
         _pairCodeInput.value = ""
+        _pairingNavState.value = PairingNavState.EnteringCode(server)
+    }
+
+    // 【修改】：取消輸入配對碼＝回到裝置清單，而不是整個關閉
+    fun cancelPairing() {
+        pendingPairServer = null
+        _pairingError.value = null
+        _pairCodeInput.value = ""
+        _pairingNavState.value = PairingNavState.DeviceList
     }
 
     fun selectServer(uuid: String) {
@@ -168,7 +171,7 @@ class TouchpadViewModel(context: Context) : ViewModel() {
         pairingManager.setSelectedServerUuid(uuid)
         wsClient.close()
         _connState.value = ConnState.DISCONNECTED
-        _showPairDialog.value = false
+        _pairingNavState.value = PairingNavState.Hidden
         forceReconnect()
     }
 
@@ -185,24 +188,26 @@ class TouchpadViewModel(context: Context) : ViewModel() {
         refreshServerLists()
     }
 
+    // 【修改】：完全關閉配對相關畫面
     fun closeServerSelector() {
-        _showPairDialog.value = false
-        _targetServerToPair.value = null
+        pendingPairServer = null
+        _pairingNavState.value = PairingNavState.Hidden
     }
 
     fun startPairing(code: String) {
-        val server = _targetServerToPair.value ?: return
+        val server = pendingPairServer ?: return
         _isPairingBusy.value = true
         _pairingError.value = null
         wsClient.connectForPairing(server.host, server.port, code.trim())
     }
 
+    // 【修改】：開啟裝置清單畫面（首次引導畫面、狀態列點擊都會呼叫這個）
     fun openServerSelector() {
         _pairingError.value = null
         _pairCodeInput.value = ""
-        _targetServerToPair.value = null
+        pendingPairServer = null
         refreshServerLists()
-        _showPairDialog.value = true
+        _pairingNavState.value = PairingNavState.DeviceList
         startPairingScan()
     }
 
@@ -237,7 +242,8 @@ class TouchpadViewModel(context: Context) : ViewModel() {
         if (supervisorJob?.isActive == true) return
         supervisorJob = viewModelScope.launch {
             while (true) {
-                if (_connState.value == ConnState.DISCONNECTED && isAppActive && !_showPairDialog.value) {
+                val dialogOpen = _pairingNavState.value != PairingNavState.Hidden
+                if (_connState.value == ConnState.DISCONNECTED && isAppActive && !dialogOpen) {
                     _connState.value = ConnState.CONNECTING
                     Log.d("AUTO_CONNECT", "搜尋可用電腦中...")
 
@@ -295,6 +301,6 @@ class TouchpadViewModel(context: Context) : ViewModel() {
     override fun onCleared() {
         super.onCleared()
         wsClient.close()
-        wifiPerformanceManager.release() // 【新增】
+        wifiPerformanceManager.release()
     }
 }

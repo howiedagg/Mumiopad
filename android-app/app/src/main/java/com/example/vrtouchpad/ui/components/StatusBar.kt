@@ -2,17 +2,24 @@ package com.example.vrtouchpad.ui.components
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.example.vrtouchpad.network.ConnState
 
 @Composable
@@ -77,23 +84,36 @@ fun StatusBar(
             )
         }
 
-        // --- 右側輔助按鈕 ---
+        // 【修改】：右側輔助按鈕改為 icon-only 圓形按鈕，縮小佔用寬度，
+        // 讓狀態膠囊在窄螢幕上不會被文字按鈕擠壓。
         Row(verticalAlignment = Alignment.CenterVertically) {
             if (connState == ConnState.CONNECTED) {
-                TextButton(onClick = onToggleKeyboard) {
-                    Text(
-                        text = if (isKeyboardOpen) "關閉鍵盤" else "鍵盤輸入",
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-                }
+                IconGlyphButton(
+                    glyph = "⌨",
+                    highlighted = isKeyboardOpen,
+                    onClick = onToggleKeyboard,
+                )
                 Spacer(Modifier.width(4.dp))
             }
-            TextButton(onClick = onSettingsClick) {
-                Text(
-                    text = "設定",
-                    style = MaterialTheme.typography.bodyMedium
-                )
-            }
+            IconGlyphButton(glyph = "⚙", onClick = onSettingsClick)
         }
+    }
+}
+
+@Composable
+private fun IconGlyphButton(
+    glyph: String,
+    highlighted: Boolean = false,
+    onClick: () -> Unit,
+) {
+    Box(
+        modifier = Modifier
+            .size(40.dp)
+            .clip(CircleShape)
+            .background(if (highlighted) Color(0xFF0D47A1) else Color.Transparent)
+            .clickable { onClick() },
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(text = glyph, fontSize = 18.sp, color = Color.White)
     }
 }

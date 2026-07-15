@@ -5,32 +5,36 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Button
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
-import androidx.compose.runtime.*
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalLifecycleOwner
-import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
 
+import com.example.vrtouchpad.ui.PairingNavState
 import com.example.vrtouchpad.ui.TouchpadViewModel
-import com.example.vrtouchpad.ui.components.StatusBar
+import com.example.vrtouchpad.ui.components.DiscoveredDeviceSnackbar
 import com.example.vrtouchpad.ui.components.InvisibleKeyboardInput
+import com.example.vrtouchpad.ui.components.StatusBar
 import com.example.vrtouchpad.ui.components.Touchpad
+import com.example.vrtouchpad.ui.components.WelcomeOnboarding
 
-import com.example.vrtouchpad.ui.dialogs.PairDialog
+import com.example.vrtouchpad.ui.dialogs.PairingHost
 import com.example.vrtouchpad.ui.dialogs.SettingsDialog
 import com.example.vrtouchpad.network.ConnState
 
@@ -63,7 +67,7 @@ fun AppRoot(viewModel: TouchpadViewModel) {
     val scope = rememberCoroutineScope()
 
     val connState by viewModel.connState.collectAsState()
-    val showPairDialog by viewModel.showPairDialog.collectAsState()
+    val pairingNavState by viewModel.pairingNavState.collectAsState()
     val isKeyboardActive by viewModel.isKeyboardActive.collectAsState()
 
     val mouseSpeed by viewModel.mouseSpeed.collectAsState()
@@ -75,12 +79,12 @@ fun AppRoot(viewModel: TouchpadViewModel) {
     val unpairedDiscovered by viewModel.unpairedDiscovered.collectAsState()
     val savedServers by viewModel.savedServers.collectAsState()
     val isPairingBusy by viewModel.isPairingBusy.collectAsState()
+    val isScanning by viewModel.isScanning.collectAsState()
     val pairingError by viewModel.pairingError.collectAsState()
-    val targetServerToPair by viewModel.targetServerToPair.collectAsState()
 
     var showSettings by remember { mutableStateOf(false) }
 
-    val lifecycleOwner = LocalLifecycleOwner.current
+    val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
@@ -95,17 +99,19 @@ fun AppRoot(viewModel: TouchpadViewModel) {
         }
     }
 
-    // 【新增】：攔截 Android 系統原生返回按鍵與手勢
-    // 只有在與電腦連線成功 (CONNECTED) 時此攔截器才會啟用
     BackHandler(enabled = connState == ConnState.CONNECTED) {
         if (isKeyboardActive) {
-            // 若虛擬鍵盤正在顯示，返回鍵優先關閉鍵盤
             viewModel.setKeyboardActive(false)
         } else {
-            // 鍵盤關閉狀態下，將返回事件轉化為對應 PC 端的上一頁操作
             viewModel.wsClient.sendKeypress("BROWSER_BACK")
         }
     }
+
+    // 【新增】：從未配對過任何電腦、且目前沒有連線、也沒有配對畫面開著時，
+    // 顯示全螢幕引導，取代原本讓使用者自己猜的空白觸控板。
+    val showOnboarding = savedServers.isEmpty() &&
+        connState != ConnState.CONNECTED &&
+        pairingNavState == PairingNavState.Hidden
 
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize()) {
@@ -117,32 +123,18 @@ fun AppRoot(viewModel: TouchpadViewModel) {
                 onToggleKeyboard = { viewModel.toggleKeyboard() }
             )
 
-            AnimatedVisibility(
-                visible = connState != ConnState.CONNECTED && unpairedDiscovered.isNotEmpty()
+            // 【修改】：原本固定高度的 Row 提示改為可自動收合的 snackbar，
+            // 且點擊一律導向完整裝置清單，不會漏掉除了第一台以外的裝置。
+            if (connState != ConnState.CONNECTED &&
+                pairingNavState == PairingNavState.Hidden &&
+                unpairedDiscovered.isNotEmpty() &&
+                !showOnboarding
             ) {
-                val targetServer = unpairedDiscovered.firstOrNull()
-                if (targetServer != null) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 8.dp)
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(Color(0xFF0D47A1))
-                            .padding(12.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column {
-                            Text("發現附近新電腦", style = MaterialTheme.typography.titleSmall, color = Color.White)
-                            Text(targetServer.name, style = MaterialTheme.typography.bodySmall, color = Color.LightGray)
-                        }
-                        Button(
-                            onClick = { viewModel.triggerPairing(targetServer) }
-                        ) {
-                            Text("配對連線")
-                        }
-                    }
-                }
+                DiscoveredDeviceSnackbar(
+                    deviceCount = unpairedDiscovered.size,
+                    onClick = { viewModel.openServerSelector() },
+                    modifier = Modifier.fillMaxWidth(),
+                )
             }
 
             InvisibleKeyboardInput(
@@ -152,34 +144,42 @@ fun AppRoot(viewModel: TouchpadViewModel) {
                 onKeyboardDismissed = { viewModel.setKeyboardActive(false) }
             )
 
-            Touchpad(
-                modifier = Modifier.weight(1f).fillMaxWidth(),
-                enabled = connState == ConnState.CONNECTED,
-                mouseSpeed = mouseSpeed,
-                scrollSpeed = scrollSpeed,
-                reverseScroll = reverseScroll,
-                scope = scope,
-                onOutEvent = { viewModel.wsClient.sendEvent(it) },
-            )
+            if (showOnboarding) {
+                WelcomeOnboarding(
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                    onFindComputer = { viewModel.openServerSelector() },
+                )
+            } else {
+                Touchpad(
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                    enabled = connState == ConnState.CONNECTED,
+                    mouseSpeed = mouseSpeed,
+                    scrollSpeed = scrollSpeed,
+                    reverseScroll = reverseScroll,
+                    scope = scope,
+                    onOutEvent = { viewModel.wsClient.sendEvent(it) },
+                )
+            }
         }
 
-        if (showPairDialog) {
-            PairDialog(
-                pairCode = pairCodeInput,
-                savedServers = savedServers,
-                unpairedDiscovered = unpairedDiscovered,
-                targetServerToPair = targetServerToPair,
-                isPairingBusy = isPairingBusy,
-                pairingError = pairingError,
-                onSelectServer = { uuid -> viewModel.selectServer(uuid) },
-                onDeleteServer = { uuid -> viewModel.deleteServer(uuid) },
-                onStartPairing = { server -> viewModel.triggerPairing(server) },
-                onCancelPairing = { viewModel.cancelPairing() },
-                onPairCodeChange = { viewModel.updatePairCode(it) },
-                onConfirm = { code -> viewModel.startPairing(code) },
-                onDismiss = { viewModel.closeServerSelector() }
-            )
-        }
+        // 【修改】：原本單一 PairDialog 改為 PairingHost，依 PairingNavState
+        // 分派到 DeviceListScreen 或 PairingCodeScreen，彼此獨立不互相耦合。
+        PairingHost(
+            navState = pairingNavState,
+            savedServers = savedServers,
+            unpairedDiscovered = unpairedDiscovered,
+            isScanning = isScanning,
+            pairCode = pairCodeInput,
+            isPairingBusy = isPairingBusy,
+            pairingError = pairingError,
+            onSelectSaved = { uuid -> viewModel.selectServer(uuid) },
+            onDeleteSaved = { uuid -> viewModel.deleteServer(uuid) },
+            onStartPairing = { server -> viewModel.triggerPairing(server) },
+            onPairCodeChange = { viewModel.updatePairCode(it) },
+            onConfirmPairing = { code -> viewModel.startPairing(code) },
+            onBackToList = { viewModel.cancelPairing() },
+            onDismiss = { viewModel.closeServerSelector() },
+        )
 
         if (showSettings) {
             SettingsDialog(
