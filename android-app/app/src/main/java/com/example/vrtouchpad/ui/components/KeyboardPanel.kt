@@ -34,22 +34,19 @@ fun InvisibleKeyboardInput(
     // 追蹤鍵盤在本次開啟週期中，是否至少有成功顯示過
     var hasKeyboardBeenShown by remember { mutableStateOf(false) }
 
-    // 【核心優化】：使用 Android 底層 OnGlobalLayoutListener 監聽物理可見螢幕高度變化
+    // 使用 Android 底層 OnGlobalLayoutListener 監聽物理可見螢幕高度變化
     DisposableEffect(view) {
         val listener = ViewTreeObserver.OnGlobalLayoutListener {
             val rect = Rect()
-            // 取得當前 App 視窗實體可見區域（會排除鍵盤佔用部分）
             view.getWindowVisibleDisplayFrame(rect)
             val screenHeight = view.rootView.height
             val keypadHeight = screenHeight - rect.bottom
 
-            // 如果被遮擋的高度大於螢幕總高度的 15%，即判定鍵盤正開啟
             val isKeyboardOpen = keypadHeight > screenHeight * 0.15
 
             if (isKeyboardOpen) {
                 hasKeyboardBeenShown = true
             } else if (hasKeyboardBeenShown) {
-                // 曾經開啟過，且目前被遮擋高度歸零 -> 觸發狀態回跳
                 onKeyboardDismissed()
             }
         }
@@ -65,8 +62,9 @@ fun InvisibleKeyboardInput(
         }
     }
 
-    // 建立一個長度為 20 的底線緩衝區，游標鎖定在最右側
-    val anchorText = "____________________"
+    // 【修改】：將預設緩衝區極大化至 1000 個空白字元，提供充足的退格空間並徹底隱形
+    val anchorText = remember { " ".repeat(1000) }
+
     var textFieldValue by remember {
         mutableStateOf(TextFieldValue(text = anchorText, selection = TextRange(anchorText.length)))
     }
@@ -90,7 +88,9 @@ fun InvisibleKeyboardInput(
                             onSendKey("BACKSPACE")
                         }
 
-                        if (newText.length < 5) {
+                        // 【修改】：按住退格時不再頻繁重置。只有當 1000 字元被刪到剩下不到 100 字元時，
+                        // 才強制重置。這能完美避免輸入法在連續刪除時因 Buffer 變更而中斷。
+                        if (newText.length < 100) {
                             textFieldValue = TextFieldValue(text = anchorText, selection = TextRange(anchorText.length))
                         } else {
                             textFieldValue = newValue
@@ -107,6 +107,7 @@ fun InvisibleKeyboardInput(
                                 onSendText(committed)
                             }
                         }
+                        // 【修改】：每當有新字元成功送出時，才順便在背景悄悄補滿 1000 字元緩衝區
                         textFieldValue = TextFieldValue(text = anchorText, selection = TextRange(anchorText.length))
                     }
 
