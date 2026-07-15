@@ -21,6 +21,9 @@ jobs:
     outputs:
       version: ${{ steps.get_version.outputs.version }}
     steps:
+      - name: 檢出專案代碼
+        uses: actions/checkout@v4
+
       - name: 確定版本號
         id: get_version
         env:
@@ -35,21 +38,21 @@ jobs:
             
             # 2. 使用 Python 解析並依「個位數滿 9 進位」規則自動 +1
             NEXT_TAG=$(python3 -c "
-            tag = '$LATEST_TAG'.lstrip('v')
-            try:
-                parts = list(map(int, tag.split('.')))
-                if len(parts) != 3: raise ValueError
-            except:
-                parts = [0, 0, 0]
-            
-            parts[2] += 1
-            if parts[2] > 9:
-                parts[2] = 0
-                parts[1] += 1
-                if parts[1] > 9:
-                    parts[1] = 0
-                    parts[0] += 1
-            print(f'v{parts[0]}.{parts[1]}.{parts[2]}')
+          tag = '$LATEST_TAG'.lstrip('v')
+          try:
+              parts = list(map(int, tag.split('.')))
+              if len(parts) != 3: raise ValueError
+          except:
+              parts = [0, 0, 0]
+          
+          parts[2] += 1
+          if parts[2] > 9:
+              parts[2] = 0
+              parts[1] += 1
+              if parts[1] > 9:
+                  parts[1] = 0
+                  parts[0] += 1
+          print(f'v{parts[0]}.{parts[1]}.{parts[2]}')
             ")
             echo "自動計算出下一個版本號為: $NEXT_TAG"
             echo "version=$NEXT_TAG" >> $GITHUB_OUTPUT
@@ -60,6 +63,7 @@ jobs:
             fi
             echo "使用使用者手動指定的版本號: $INPUT_VER"
             echo "version=$INPUT_VER" >> $GITHUB_OUTPUT
+          fi
 
   # 任務二：建置 Android APK
   build-apk:
