@@ -278,8 +278,109 @@ def apply_scroll(dy: float):
         accumulated_scroll_y -= steps
         mouse.scroll(0, steps)
 
+
+# 【修正】：相容 64 位元 Windows 的剪貼簿處理，並加入 Fail-safe 退回保護
 def apply_text(value: str):
-    keyboard.type(value)
+    if not IS_WINDOWS:
+        keyboard.type(value)
+        return
+
+    # 必須顯式宣告，避免 Windows API 將 64 位元 Handle 截斷為 32 位元 int
+    import ctypes
+    from ctypes import wintypes
+
+    user32 = ctypes.windll.user32
+    kernel32 = ctypes.windll.kernel32
+
+    # --- Windows 64-bit 安全介面宣告 ---
+    kernel32.GlobalAlloc.argtypes = [wintypes.UINT, ctypes.c_size_t]
+    kernel32.GlobalAlloc.restype = wintypes.HGLOBAL
+    kernel32.GlobalLock.argtypes = [wintypes.HGLOBAL]
+    kernel32.GlobalLock.restype = ctypes.c_void_p
+    kernel32.GlobalUnlock.argtypes = [wintypes.HGLOBAL]
+    kernel32.GlobalUnlock.restype = wintypes.BOOL
+
+    user32.OpenClipboard.argtypes = [wintypes.HWND]
+    user32.OpenClipboard.restype = wintypes.BOOL
+    user32.CloseClipboard.argtypes = []
+    user32.CloseClipboard.restype = wintypes.BOOL
+    user32.EmptyClipboard.argtypes = []
+    user32.EmptyClipboard.restype = wintypes.BOOL
+    user32.GetClipboardData.argtypes = [wintypes.UINT]
+    user32.GetClipboardData.restype = wintypes.HANDLE
+    user32.SetClipboardData.argtypes = [wintypes.UINT, wintypes.HANDLE]
+    user32.SetClipboardData.restype = wintypes.HANDLE
+    user32.IsClipboardFormatAvailable.argtypes = [wintypes.UINT]
+    user32.IsClipboardFormatAvailable.restype = wintypes.BOOL
+    # ----------------------------------
+
+    # 1. 備份原有剪貼簿內容
+    old_text = None
+    if user32.OpenClipboard(None):
+        try:
+            if user32.IsClipboardFormatAvailable(13): # CF_UNICODETEXT
+                h_data = user32.GetClipboardData(13)
+                if h_data:
+                    p_data = kernel32.GlobalLock(h_data)
+                    if p_data:
+                        old_text = ctypes.wstring_at(p_data)
+                        kernel32.GlobalUnlock(h_data)
+        except Exception:
+            pass
+        finally:
+            user32.CloseClipboard()
+
+    # 2. 將新文字寫入剪貼簿
+    success = False
+    if user32.OpenClipboard(None):
+        try:
+            user32.EmptyClipboard()
+            text_bytes = value.encode('utf-16le') + b'\x00\x00'
+            h_global = kernel32.GlobalAlloc(0x0042, len(text_bytes)) # GMEM_MOVEABLE
+            if h_global:
+                p_global = kernel32.GlobalLock(h_global)
+                if p_global:
+                    ctypes.memmove(p_global, text_bytes, len(text_bytes))
+                    kernel32.GlobalUnlock(h_global)
+                    user32.SetClipboardData(13, h_global)
+                    success = True
+        except Exception:
+            pass
+        finally:
+            user32.CloseClipboard()
+
+    # 【保護邏輯】：如果寫入剪貼簿因任何原因失敗，立刻退回到原來的虛擬按鍵模式，確保字一定打得出來
+    if not success:
+        keyboard.type(value)
+        return
+
+    # 3. 模擬 Ctrl + V 貼上
+    with keyboard.pressed(Key.ctrl):
+        keyboard.press('v')
+        keyboard.release('v')
+
+    # 4. 非同步還原剪貼簿
+    if old_text is not None:
+        def restore_task():
+            time.sleep(0.12)  # 給目標輸入框充足時間完成 Ctrl+V
+            if user32.OpenClipboard(None):
+                try:
+                    user32.EmptyClipboard()
+                    old_bytes = old_text.encode('utf-16le') + b'\x00\x00'
+                    h_global = kernel32.GlobalAlloc(0x0042, len(old_bytes))
+                    if h_global:
+                        p_global = kernel32.GlobalLock(h_global)
+                        if p_global:
+                            ctypes.memmove(p_global, old_bytes, len(old_bytes))
+                            kernel32.GlobalUnlock(h_global)
+                            user32.SetClipboardData(13, h_global)
+                except Exception:
+                    pass
+                finally:
+                    user32.CloseClipboard()
+
+        threading.Thread(target=restore_task, daemon=True).start()
+
 
 def apply_keypress(key_name: str):
     # 支援瀏覽器與系統的前進與後退快捷鍵
@@ -298,7 +399,7 @@ def apply_keypress(key_name: str):
             keyboard.release(key)
 
 def apply_gesture(name: str, direction: str):
-    # 【修改】：將 multitask 觸發按鍵修改為僅偵測 "tap"，並執行 Win + Tab (工作檢視)
+    # 將 multitask 觸發按鍵修改為僅偵測 "tap"，並執行 Win + Tab (工作檢視)
     if name == "multitask" and direction == "tap":
         with keyboard.pressed(Key.cmd):
             keyboard.press(Key.tab)
