@@ -54,6 +54,8 @@ SPECIAL_KEYS = {
     "DOWN": Key.down,
     "LEFT": Key.left,
     "RIGHT": Key.right,
+    "VOLUME_UP": Key.media_volume_up,
+    "VOLUME_DOWN": Key.media_volume_down,
 }
 
 loop = None  

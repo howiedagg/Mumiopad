@@ -1,6 +1,7 @@
 package com.example.vrtouchpad
 
 import android.os.Bundle
+import android.view.KeyEvent // 【新增】：匯入實體按鍵事件類別
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
@@ -15,10 +16,10 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope // 修正問題 1：補上遺漏的導入
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.core.graphics.drawable.toDrawable // 修正問題 2：導入 KTX 擴充函式
+import androidx.core.graphics.drawable.toDrawable
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.ViewModel
@@ -38,17 +39,19 @@ import com.example.vrtouchpad.ui.dialogs.SettingsDialog
 import com.example.vrtouchpad.network.ConnState
 
 class MainActivity : ComponentActivity() {
+    // 【新增】：將 viewModel 宣告為類別變數以便在 onKeyDown 中呼叫
+    private lateinit var touchpadViewModel: TouchpadViewModel
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // 修正問題 2：使用 KTX 的 toDrawable() 來設定背景顏色
         window.setBackgroundDrawable(0xFF1E1E1E.toInt().toDrawable())
 
         setContent {
             MaterialTheme {
                 val context = androidx.compose.ui.platform.LocalContext.current.applicationContext
 
-                val viewModel: TouchpadViewModel = viewModel(
+                touchpadViewModel = viewModel(
                     factory = object : ViewModelProvider.Factory {
                         @Suppress("UNCHECKED_CAST")
                         override fun <T : ViewModel> create(modelClass: Class<T>): T {
@@ -56,15 +59,34 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                 )
-                AppRoot(viewModel)
+                AppRoot(touchpadViewModel)
             }
         }
+    }
+
+    // 【核心新增】：監聽實體按鍵事件
+    override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
+        // 只有在 ViewModel 已初始化且「已成功連線電腦」時，才進行實體音量鍵攔截
+        if (::touchpadViewModel.isInitialized && touchpadViewModel.connState.value == ConnState.CONNECTED) {
+            when (keyCode) {
+                KeyEvent.KEYCODE_VOLUME_UP -> {
+                    touchpadViewModel.wsClient.sendKeypress("VOLUME_UP")
+                    return true // 傳回 true，阻止手機本身音量條彈出
+                }
+                KeyEvent.KEYCODE_VOLUME_DOWN -> {
+                    touchpadViewModel.wsClient.sendKeypress("VOLUME_DOWN")
+                    return true // 傳回 true，阻止手機本身音量條彈出
+                }
+            }
+        }
+        // 如果未連線，則走系統預設邏輯，正常調整手機媒體音量
+        return super.onKeyDown(keyCode, event)
     }
 }
 
 @Composable
 fun AppRoot(viewModel: TouchpadViewModel) {
-    val scope = rememberCoroutineScope() // 這裡現在可正常解析，不會再出現 Unresolved reference 錯誤
+    val scope = rememberCoroutineScope()
 
     val connState by viewModel.connState.collectAsState()
     val pairingNavState by viewModel.pairingNavState.collectAsState()
