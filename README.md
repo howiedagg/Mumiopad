@@ -1,33 +1,65 @@
-# VR Touchpad (Mumiopad) 📱💻
+# Mumiopad - Android Virtual Touchpad & Wireless Keyboard over Wi-Fi
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Platform: Android](https://img.shields.io/badge/Platform-Android_8.0+-green.svg)](#)
-[![Python: 3.9+](https://img.shields.io/badge/Python-3.9+-blue.svg)](#)
-
-VR Touchpad 是一款專為高響應性設計的無線觸控板解決方案。透過 Wi-Fi 網路，將您的 Android 手機瞬間轉化為電腦的高精度滑鼠、多指觸控板與虛擬鍵盤。
-
-專案採用 **極簡零配置（Zero-Config）** 設計，無需手動輸入 IP 或繁瑣的 6 位數配對碼，即可在數秒內完成流暢、安全的自動連線。
+🌐 **[繁體中文](README_zh.md)**
 
 ---
 
-## ✨ 核心特色
+Mumiopad is an open-source, lightweight **wireless touchpad, virtual mouse, and remote keyboard app** that turns any Android device into a Wi-Fi remote controller for Windows PCs. It is designed for casual remote control scenarios—such as smart TV navigation, media center control (HTPC), wireless office presentations, or living room PC control.
 
-- **零配置自動探索**：利用 mDNS (Multicast DNS) 技術，手機開啟即可自動搜尋同網域下的電腦。
-- **一鍵安全授權**：捨棄傳統密碼輸入，採用「手機端發起 -> 電腦端彈窗確認」的極簡安全配對機制。
-- **極致超低延遲**：
-  - **1ms 系統精度**：Windows 端啟用高精度計時器 `timeBeginPeriod(1)`。
-  - **TCP No-Delay**：強制關閉 Nagle 演算法，消除高頻率小封包的週期性微卡頓。
-  - **零垃圾回收卡頓**：Android 端捨棄 JSON 動態序列化，改用原生字串模板，徹底避免高頻觸控觸發 GC 幀延遲。
-- **平滑滾動阻尼與慣性**：獨創雙指滾動「死區補償平滑器（Scroll Catchup Smoother）」，保留 32dp 精確防誤觸門檻的同時，完全補回啟動位移。
-- **現代輸入法完全相容**：虛擬鍵盤支援**語音輸入（Speech-to-Text）**、**滑行輸入（Swipe Typing）** 與自動校正。
+Using high-performance local **WebSockets** and **mDNS auto-discovery**, Mumiopad delivers low-latency input emulation and smooth mouse tracking without requiring complex network configurations.
+
+### 💡 Supported Touchpad Gestures
+Mumiopad supports standard Windows Precision Touchpad gestures complemented by customized Android haptic feedback:
+
+*   **One-finger movement**: Smooth mouse cursor tracking.
+*   **One-finger Tap**: Left click.
+*   **One-finger Long Press (Hold to Drag)**: Hold still for 200ms to trigger a simulated tactile click vibration, letting you drag windows or select text easily. Lifting your finger triggers a release haptic pulse.
+*   **Two-finger Scroll**: Vertical page scrolling (supports native reverse/natural scrolling).
+*   **Two-finger Swipe (Full Area)**: Slide horizontally anywhere on the trackpad to go "Back" (swipe right) and "Forward" (swipe left) in web browsers (Chrome, Edge, Firefox). Features a solid haptic confirmation.
+*   **Two-finger Tap**: Right click.
+*   **Three-finger Tap**: Open Windows Task View / Multitasking layout (Win + Tab).
+*   **Three-finger Swipe Down**: Show Desktop (minimizes all active windows).
+*   **Three-finger Swipe Up**: Restore minimized windows.
+*   **Four-finger Tap**: Tap anywhere on the touchpad to toggle the local Android on-screen keyboard for text input, accompanied by a quick haptic feedback.
+*   **Physical Volume Buttons**: Directly adjust your PC's master volume using your Android device's hardware volume keys while connected.
 
 ---
 
-## 🛠️ 運作架構
+### 📥 How to Turn Android Phone into Wireless Mouse & Keyboard?
 
-```text
-+-----------------------+              Wi-Fi (WebSockets)            +-----------------------+
-|  Android Phone (App)  | <========================================> |     PC (Server)       |
-|  - Jetpack Compose UI |        - TCP_NODELAY (No Latency)          |  - Python asyncio     |
-|  - Gesture Engine     |        - Zero-Config mDNS Broadcast        |  - Win32 API Control  |
-+-----------------------+                                            +-----------------------+
+#### Step 1: Run the PC WebSocket Server
+1. Download the `pc-server-python` folder.
+2. Double-click `start.bat`. The server runs in the background and places a management icon in the Windows system tray.
+3. *Note: Ensure Python 3 is installed on your computer.*
+
+#### Step 2: Set up the Android Wi-Fi Touchpad App
+1. Install and open the Android App.
+2. Make sure your phone and PC are connected to the **same Wi-Fi local network**.
+3. The app will automatically discover nearby PCs running the server. Tap your computer name to connect.
+4. An authorization dialog will pop up on your Windows screen. Click "Yes" to pair.
+5. *Tip: You can manage, disconnect, or unpair authorized devices individually or clear all history directly from the Windows system tray.*
+
+---
+
+### 🛠 Technical Architecture for Developers
+
+#### Technology Stack
+*   **Android App**: Kotlin, Jetpack Compose UI, OkHttp (WebSocket client), mDNS (Android NsdManager).
+*   **PC Server**: Python, websockets, pynput (OS-level input emulation), pystray (system tray interface).
+
+#### Decoupled Codebase Structure
+The project is built with modularity and extensibility in mind:
+*   `GestureEngine.kt` is a pure Kotlin gesture state machine independent of Android UI components. It dispatches gesture instructions and haptic triggers via clean callbacks, making it unit-testable.
+*   `ScrollCatchupSmoother.kt` distributes the initial dead-zone slop delta over smooth ticks to eliminate scrolling latency.
+*   `WifiPerformanceManager.kt` acquires a full low-latency Wi-Fi lock (`WIFI_MODE_FULL_LOW_LATENCY`) during active connections to prevent micro-stuttering caused by mobile chipsets entering power-saving modes.
+
+#### Manual Server Environment Setup:
+    cd pc-server-python
+    python -m venv .venv
+    source .venv/bin/activate  # On Windows run: .venv\Scripts\activate
+    pip install -r requirements.txt
+    python server.py
+
+---
+
+*This project was developed by the Gemini 3.5 Flash model.*
