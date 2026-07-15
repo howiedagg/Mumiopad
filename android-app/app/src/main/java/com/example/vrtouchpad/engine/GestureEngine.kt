@@ -14,17 +14,23 @@ sealed class TouchOutEvent {
     data class Gesture(val name: String, val direction: String) : TouchOutEvent()
 }
 
+// 定義本地裝置專用的無視覺回饋型態
+enum class LocalFeedbackType {
+    PRESS_LOCK,   // 長按達標，模擬按鍵壓下鎖定
+    RELEASE_LOCK  // 手指抬起或狀態解除，模擬按鍵彈起釋放
+}
+
 class GestureEngine(
     private val scope: CoroutineScope,
     density: Float,
     private val longPressMs: Long = 200,
     private val emit: (TouchOutEvent) -> Unit,
+    private val onLocalFeedback: (LocalFeedbackType) -> Unit = {} // 新增本地回饋回呼
 ) {
     private val slopPx = 8f * density
     private val stillPx = 10f * density
-    private val scrollActivationSlopPx = 32f * density // 維持 32dp 不變，靠死區補償解決延遲感
+    private val scrollActivationSlopPx = 32f * density
 
-    // 採樣時間窗口
     private val emitIntervalMs = 10L
     private val multiTapWindowMs = 120L
     private val tapTimeoutMs = 280L
@@ -61,8 +67,6 @@ class GestureEngine(
     private var accumulatedDragDy = 0f
     private var accumulatedScrollDy = 0f
 
-    // 【修正】：死區補償平滑器，與狀態機邏輯解耦，只透過 callback 把補償位移
-    // 疊加進 accumulatedScrollDy，沿用原本既有的 emit 節流機制送出。
     private val catchupSmoother = ScrollCatchupSmoother(scope) { delta ->
         accumulatedScrollDy += delta
     }
@@ -94,6 +98,8 @@ class GestureEngine(
                     }
                     emit(TouchOutEvent.Click("left", "up"))
                     dragging = false
+                    // 雙指觸下導致單指拖曳中斷時，觸發按鍵釋放震動
+                    onLocalFeedback(LocalFeedbackType.RELEASE_LOCK)
                 }
 
                 twoFingerDownTime = System.currentTimeMillis()
@@ -179,16 +185,9 @@ class GestureEngine(
                     if (abs(currentAvgY - startAvgY) >= scrollActivationSlopPx) {
                         mode = Mode.SCROLL
                         rightClickCandidate = false
-
-                        // 【修正】：核心 bug 修復。跨過門檻的瞬間，把「從雙指按下到現在」
-                        // 這段原本會被下面 lastScrollY 更新吃掉、從未送出的位移，
-                        // 透過 catchupSmoother 平滑補回去，消除「滑一段才開始捲動」的延遲感。
-                        // 32dp 門檻本身完全不變，只是不再讓這段位移憑空消失。
                         catchupSmoother.start(currentAvgY - startAvgY)
                         lastScrollY = currentAvgY
                     }
-                    // 【修正】：移除原本無條件的 lastScrollY = currentAvgY。
-                    // 只有在真正切換到 SCROLL 模式那一刻才更新，避免死區內的位移被默默吃掉。
                 }
             }
 
@@ -235,6 +234,8 @@ class GestureEngine(
             Mode.PREDRAG_WAIT -> if (id == firstFingerId) {
                 emit(TouchOutEvent.Click("left", "click"))
                 mode = Mode.IDLE
+                // 尚未拖曳即放開，釋放按鍵
+                onLocalFeedback(LocalFeedbackType.RELEASE_LOCK)
             }
 
             Mode.DRAG -> if (id == firstFingerId) {
@@ -244,6 +245,8 @@ class GestureEngine(
                 emit(TouchOutEvent.Click("left", "up"))
                 dragging = false
                 mode = Mode.IDLE
+                // 結束拖曳，釋放按鍵
+                onLocalFeedback(LocalFeedbackType.RELEASE_LOCK)
             }
 
             Mode.TWO_FINGER_WAIT -> {
@@ -258,21 +261,16 @@ class GestureEngine(
             }
 
             Mode.SCROLL -> {
-                // 【修正】：手指放開時若還有尚未跑完的補償動畫，立即中止，
-                // 避免放開後畫面還在殘留補償捲動、造成「鬆手後還在滑」的錯覺。
                 catchupSmoother.cancel()
                 if (abs(accumulatedScrollDy) > 0.1f) {
                     emit(TouchOutEvent.Scroll(accumulatedScrollDy))
                 }
             }
 
-            // 【修改】：將三指手勢改為「三指點擊」判定
             Mode.THREE_FINGER -> {
-                // 允許微小的手震位移量（這裡給予雙倍 slopPx 的容差）
                 if (dist(p) < slopPx * 2f) {
                     emit(TouchOutEvent.Gesture("multitask", "tap"))
                 }
-                // 一旦觸發，立即將模式設為 IDLE，防止剩下兩指抬起時重疊觸發
                 mode = Mode.IDLE
             }
 
@@ -306,7 +304,7 @@ class GestureEngine(
 
     fun reset() {
         longPressJob?.cancel()
-        catchupSmoother.cancel() // 【修正】：reset 時一併中止殘留的補償任務
+        catchupSmoother.cancel()
         pointers.clear()
         mode = Mode.IDLE
         dragging = false
@@ -325,6 +323,8 @@ class GestureEngine(
             val p = pointers[id] ?: return@launch
             if (pointers.size == 1 && dist(p) < stillPx) {
                 mode = Mode.PREDRAG_WAIT
+                // 長按達標，觸發按鍵鎖定震動
+                onLocalFeedback(LocalFeedbackType.PRESS_LOCK)
             }
         }
     }

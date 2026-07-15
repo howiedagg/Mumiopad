@@ -1,5 +1,7 @@
 package com.example.vrtouchpad.ui.components
 
+import android.os.Build
+import android.view.HapticFeedbackConstants
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -10,7 +12,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalView
 import com.example.vrtouchpad.engine.GestureEngine
+import com.example.vrtouchpad.engine.LocalFeedbackType
 import com.example.vrtouchpad.engine.TouchOutEvent
 import kotlinx.coroutines.CoroutineScope
 
@@ -20,14 +24,16 @@ fun Touchpad(
     enabled: Boolean,
     mouseSpeed: Float,
     scrollSpeed: Float,
-    reverseScroll: Boolean, // 【新增】
+    reverseScroll: Boolean,
     scope: CoroutineScope,
     onOutEvent: (TouchOutEvent) -> Unit,
 ) {
     val density = LocalDensity.current.density
+    val view = LocalView.current // 獲取當前 View 用於執行低延遲系統級觸覺回饋
+
     val currentMouseSpeed by rememberUpdatedState(mouseSpeed)
     val currentScrollSpeed by rememberUpdatedState(scrollSpeed)
-    val currentReverseScroll by rememberUpdatedState(reverseScroll) // 【新增】
+    val currentReverseScroll by rememberUpdatedState(reverseScroll)
 
     val currentOnOutEvent by rememberUpdatedState(onOutEvent)
 
@@ -36,15 +42,11 @@ fun Touchpad(
             scope = scope,
             density = density,
             emit = { event ->
-                // 【效能修正】：移除高頻熱路徑上的 Log.d。
-                // 每次移動最高可達 ~100Hz，字串模板組裝 + JNI logcat 呼叫
-                // 會在 UI thread 上造成可感知的微卡頓，僅在需要除錯時再手動打開。
                 val scaled = when (event) {
                     is TouchOutEvent.Move -> TouchOutEvent.Move(
                         event.dx * currentMouseSpeed, event.dy * currentMouseSpeed,
                     )
                     is TouchOutEvent.Scroll -> {
-                        // 【核心邏輯】：如果開啟反向，就將方向乘上 -1
                         val directionMultiplier = if (currentReverseScroll) -1f else 1f
                         TouchOutEvent.Scroll(event.dy * currentScrollSpeed * directionMultiplier)
                     }
@@ -52,6 +54,27 @@ fun Touchpad(
                 }
                 currentOnOutEvent(scaled)
             },
+            onLocalFeedback = { type ->
+                // 使用低延遲且免宣告 VIBRATE 權限的 performHapticFeedback 執行震動
+                val constant = when (type) {
+                    LocalFeedbackType.PRESS_LOCK -> {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+                            HapticFeedbackConstants.KEYBOARD_PRESS
+                        } else {
+                            HapticFeedbackConstants.LONG_PRESS
+                        }
+                    }
+                    LocalFeedbackType.RELEASE_LOCK -> {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+                            HapticFeedbackConstants.KEYBOARD_RELEASE
+                        } else {
+                            HapticFeedbackConstants.VIRTUAL_KEY_RELEASE
+                        }
+                    }
+                }
+                // 執行微擬真物理開關觸感
+                view.performHapticFeedback(constant)
+            }
         )
     }
 
