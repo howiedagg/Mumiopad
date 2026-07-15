@@ -26,7 +26,26 @@ if sys.platform == "win32":
 
 HOST = "0.0.0.0"
 PORT = 8765
-CONFIG_FILE = Path(__file__).parent / "server_config.json"
+import os
+
+# 系統標準儲存路徑（同 LINE、Chrome 等主流軟體做法）
+# 保持使用者執行目錄乾淨，同時能永久記住配對
+def get_secure_config_path() -> Path:
+    if sys.platform == "win32":
+        # 儲存在 Windows 內建的應用程式設定資料夾中
+        appdata = os.environ.get("APPDATA")
+        if appdata:
+            base_dir = Path(appdata) / "Mumiopad"
+        else:
+            base_dir = Path.home() / ".mumiopad"
+    else:
+        base_dir = Path.home() / ".config" / "mumiopad"
+        
+    # 自動建立隱藏資料夾
+    base_dir.mkdir(parents=True, exist_ok=True)
+    return base_dir / "server_config.json"
+
+CONFIG_FILE = get_secure_config_path()
 
 mouse = MouseController()
 keyboard = KeyboardController()
