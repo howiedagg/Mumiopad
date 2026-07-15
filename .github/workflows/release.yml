@@ -15,11 +15,9 @@ on:
           - 優化效能與連線穩定度
 
 jobs:
-  build-and-release:
+  # 任務一：建置 Android APK
+  build-apk:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write # 確保工作流有權限寫入 Release 頁面
-
     steps:
       - name: 檢出專案代碼
         uses: actions/checkout@v4
@@ -37,21 +35,69 @@ jobs:
         run: chmod +x android-app/gradlew
 
       - name: 建置 Android 試用版 APK
-        # 這裡建置 Debug APK，因為它會自動帶有測試憑證，使用者下載後可直接在手機上安裝測試
         run: |
           cd android-app
           ./gradlew assembleDebug
 
-      - name: 重新命名 APK
-        run: |
-          mv android-app/app/build/outputs/apk/debug/app-debug.apk ./Mumiopad-${{ github.event.inputs.version_name }}.apk
+      - name: 暫存 APK 檔案
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-apk
+          path: android-app/app/build/outputs/apk/debug/app-debug.apk
 
-      - name: 打包 PC 端 Server 檔案
-        # 排除本機虛擬環境資料夾 (.venv) 以及暫存與設定檔，避免包進不必要的檔案
-        run: |
-          zip -r pc-server-${{ github.event.inputs.version_name }}.zip pc-server-python -x "pc-server-python/.venv/*" "pc-server-python/server_config.json" "pc-server-python/__pycache__/*"
+  # 任務二：在 Windows 環境下編譯 Python 伺服器為 .exe 執行檔
+  build-server-windows:
+    runs-on: windows-latest
+    steps:
+      - name: 檢出專案代碼
+        uses: actions/checkout@v4
 
-      - name: 建立 GitHub Release 並上傳成品
+      - name: 設定 Python 環境
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 安裝相依套件與打包工具
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller websockets pynput zeroconf pystray Pillow
+
+      - name: 使用 PyInstaller 編譯為獨立 Exe
+        run: |
+          cd pc-server-python
+          pyinstaller --onefile --noconsole --name MumiopadServer server.py
+
+      - name: 暫存 Server Exe 檔案
+        uses: actions/upload-artifact@v4
+        with:
+          name: pc-server-exe
+          path: pc-server-python/dist/MumiopadServer.exe
+
+  # 任務三：統合前兩個任務的成品，並發布至 Release
+  create-release:
+    runs-on: ubuntu-latest
+    needs: [build-apk, build-server-windows]
+    permissions:
+      contents: write
+    steps:
+      - name: 下載 APK 暫存檔
+        uses: actions/download-artifact@v4
+        with:
+          name: android-apk
+          path: ./apk-output
+
+      - name: 下載 Server 暫存檔
+        uses: actions/download-artifact@v4
+        with:
+          name: pc-server-exe
+          path: ./server-output
+
+      - name: 整理上傳檔名
+        run: |
+          mv ./apk-output/app-debug.apk ./Mumiopad-${{ github.event.inputs.version_name }}.apk
+          mv ./server-output/MumiopadServer.exe ./MumiopadServer-${{ github.event.inputs.version_name }}.exe
+
+      - name: 建立 GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.event.inputs.version_name }}
@@ -61,6 +107,6 @@ jobs:
           prerelease: false
           files: |
             Mumiopad-${{ github.event.inputs.version_name }}.apk
-            pc-server-${{ github.event.inputs.version_name }}.zip
+            MumiopadServer-${{ github.event.inputs.version_name }}.exe
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

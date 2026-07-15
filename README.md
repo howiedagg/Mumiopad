@@ -1,65 +1,79 @@
-# Mumiopad - Android Virtual Touchpad & Wireless Keyboard over Wi-Fi
+# Mumiopad - Wireless Touchpad & Virtual Keyboard over Wi-Fi
 
 🌐 **[繁體中文](README_zh.md)**
 
+Mumiopad is a lightweight, open-source tool that turns your Android device into a Wi-Fi remote controller for your PC. It is designed for casual remote control scenarios—such as smart TV navigation, media center control (HTPC), wireless presentations, or simply relaxing on your sofa.
+
+By establishing a direct local connection, Mumiopad delivers low-latency input emulation and smooth cursor tracking without requiring complex manual IP configurations.
+
 ---
 
-Mumiopad is an open-source, lightweight **wireless touchpad, virtual mouse, and remote keyboard app** that turns any Android device into a Wi-Fi remote controller for Windows PCs. It is designed for casual remote control scenarios—such as smart TV navigation, media center control (HTPC), wireless office presentations, or living room PC control.
+## 📥 Quick Start (How to Download & Connect)
 
-Using high-performance local **WebSockets** and **mDNS auto-discovery**, Mumiopad delivers low-latency input emulation and smooth mouse tracking without requiring complex network configurations.
+Please head to the 👉 **[Mumiopad Latest Releases Page](https://github.com/howiedagg/Mumiopad/releases)** to download the pre-built files:
 
-### 💡 Supported Touchpad Gestures
+### 1. Computer Setup (Windows)
+*   On the releases page, click and download `MumiopadServer-vx.x.x.exe`.
+*   **Double-click the downloaded `.exe` file to run it.**
+*   No installation or setup is required. The server launches silently and resides in your Windows system tray (bottom-right corner) without cluttering your desktop.
+
+### 2. Mobile Setup (Android)
+*   On the releases page, click and download `Mumiopad-vx.x.x.apk` to your phone and install it.
+*   Make sure both your phone and PC are connected to the **same Wi-Fi local network**.
+*   Open the mobile app; it will automatically discover your computer. Tap your computer's name, click "Yes" on the authorization popup on your PC screen, and you are ready to go!
+
+---
+
+## 🎮 Touchpad Gestures & Features
+
 Mumiopad supports standard Windows Precision Touchpad gestures complemented by customized Android haptic feedback:
 
-*   **One-finger movement**: Smooth mouse cursor tracking.
-*   **One-finger Tap**: Left click.
-*   **One-finger Long Press (Hold to Drag)**: Hold still for 200ms to trigger a simulated tactile click vibration, letting you drag windows or select text easily. Lifting your finger triggers a release haptic pulse.
-*   **Two-finger Scroll**: Vertical page scrolling (supports native reverse/natural scrolling).
-*   **Two-finger Swipe (Full Area)**: Slide horizontally anywhere on the trackpad to go "Back" (swipe right) and "Forward" (swipe left) in web browsers (Chrome, Edge, Firefox). Features a solid haptic confirmation.
-*   **Two-finger Tap**: Right click.
-*   **Three-finger Tap**: Open Windows Task View / Multitasking layout (Win + Tab).
-*   **Three-finger Swipe Down**: Show Desktop (minimizes all active windows).
-*   **Three-finger Swipe Up**: Restore minimized windows.
-*   **Four-finger Tap**: Tap anywhere on the touchpad to toggle the local Android on-screen keyboard for text input, accompanied by a quick haptic feedback.
-*   **Physical Volume Buttons**: Directly adjust your PC's master volume using your Android device's hardware volume keys while connected.
+*   **One-Finger Gestures**:
+    *   `Cursor Movement`: Slide your finger on the touchpad area.
+    *   `Left Click`: Tap once.
+    *   `Tap and Drag`: Hold still for 200ms to trigger a simulated tactile click vibration, then drag windows or select text easily. Lifting your finger triggers a release haptic pulse.
+*   **Two-Finger Gestures**:
+    *   `Right Click`: Tap with two fingers.
+    *   `Page Scroll`: Slide two fingers vertically (scroll direction and speed can be customized in settings).
+    *   `Browser Back/Forward`: Slide two fingers horizontally anywhere on the trackpad to navigate pages in web browsers.
+*   **Three-Finger Gestures**:
+    *   `Task View (Win+Tab)`: Tap with three fingers.
+    *   `Minimize All Windows`: Slide three fingers down.
+    *   `Restore Windows`: Slide three fingers up.
+*   **Four-Finger Gestures**:
+    *   `Toggle Keyboard`: Tap with four fingers to quickly open or close the local on-screen keyboard on your phone to type text.
+*   **Physical Volume Buttons**:
+    *   While connected, use your phone's hardware volume keys to directly adjust your PC's master volume. (Automatically reverts to controlling phone volume when disconnected).
 
 ---
 
-### 📥 How to Turn Android Phone into Wireless Mouse & Keyboard?
-
-Please head to the **[Releases Page](https://github.com/您的GitHub帳號/您的專案名稱/releases)** to download the latest pre-built assets.
-
-#### Step 1: Run the PC WebSocket Server
-1. Download `pc-server-vx.x.x.zip` from the release assets and extract it.
-2. Double-click `start.bat`. The server runs in the background and places an icon in the system tray.
-3. *Note: Ensure Python 3 is installed on your computer.*
-
-#### Step 2: Set up the Android Wi-Fi Touchpad App
-1. Download and install `Mumiopad-vx.x.x.apk` on your Android device.
-2. Make sure your phone and PC are connected to the **same Wi-Fi local network**.
-3. The app will automatically discover nearby PCs. Tap your computer name and click "Yes" on the PC authorization popup.
+## ⚙️ Settings Customization
+You can tap the Gear icon in the top-right corner of the mobile app to customize:
+*   **Cursor Speed** (0.3x ~ 3.0x sensitivity adjustment).
+*   **Scrolling Speed**.
+*   **Reverse Scroll (Natural Scrolling)** toggle.
 
 ---
 
-### 🛠 Technical Architecture for Developers
+<!-- Technical details are hidden here, so general users aren't overwhelmed, but developers can expand to read -->
+<details>
+<summary>🛠️ Developer Information & Technical Details (Click to Expand)</summary>
 
-#### Technology Stack
+### Technology Stack
 *   **Android App**: Kotlin, Jetpack Compose UI, OkHttp (WebSocket client), mDNS (Android NsdManager).
 *   **PC Server**: Python, websockets, pynput (OS-level input emulation), pystray (system tray interface).
 
-#### Decoupled Codebase Structure
+### Decoupled Codebase Structure
 The project is built with modularity and extensibility in mind:
 *   `GestureEngine.kt` is a pure Kotlin gesture state machine independent of Android UI components. It dispatches gesture instructions and haptic triggers via clean callbacks, making it unit-testable.
 *   `ScrollCatchupSmoother.kt` distributes the initial dead-zone slop delta over smooth ticks to eliminate scrolling latency.
 *   `WifiPerformanceManager.kt` acquires a full low-latency Wi-Fi lock (`WIFI_MODE_FULL_LOW_LATENCY`) during active connections to prevent micro-stuttering caused by mobile chipsets entering power-saving modes.
 
-#### Manual Server Environment Setup:
-    cd pc-server-python
-    python -m venv .venv
-    source .venv/bin/activate  # On Windows run: .venv\Scripts\activate
-    pip install -r requirements.txt
-    python server.py
-
----
-
-*This project was developed by the Gemini 3.5 Flash model.*
+### Manual Server Environment Setup (For Debugging)
+If you wish to run the server from source code:
+```bash
+cd pc-server-python
+python -m venv .venv
+source .venv/bin/activate  # On Windows run: .venv\Scripts\activate
+pip install -r requirements.txt
+python server.py
