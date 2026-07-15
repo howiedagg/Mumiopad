@@ -14,10 +14,9 @@ sealed class TouchOutEvent {
     data class Gesture(val name: String, val direction: String) : TouchOutEvent()
 }
 
-// 定義本地裝置專用的無視覺回饋型態
 enum class LocalFeedbackType {
-    PRESS_LOCK,   // 長按達標，模擬按鍵壓下鎖定
-    RELEASE_LOCK  // 手指抬起或狀態解除，模擬按鍵彈起釋放
+    PRESS_LOCK,
+    RELEASE_LOCK
 }
 
 class GestureEngine(
@@ -25,11 +24,12 @@ class GestureEngine(
     density: Float,
     private val longPressMs: Long = 200,
     private val emit: (TouchOutEvent) -> Unit,
-    private val onLocalFeedback: (LocalFeedbackType) -> Unit = {} // 新增本地回饋回呼
+    private val onLocalFeedback: (LocalFeedbackType) -> Unit = {}
 ) {
     private val slopPx = 8f * density
     private val stillPx = 10f * density
     private val scrollActivationSlopPx = 32f * density
+    private val swipeThresholdPx = 48f * density // 三指滑動門檻，防止輕微手震誤觸
 
     private val emitIntervalMs = 10L
     private val multiTapWindowMs = 120L
@@ -67,6 +67,10 @@ class GestureEngine(
     private var accumulatedDragDy = 0f
     private var accumulatedScrollDy = 0f
 
+    // 三指手勢專用狀態變數
+    private var threeFingerStartY = 0f
+    private var threeFingerSwiped = false
+
     private val catchupSmoother = ScrollCatchupSmoother(scope) { delta ->
         accumulatedScrollDy += delta
     }
@@ -98,7 +102,6 @@ class GestureEngine(
                     }
                     emit(TouchOutEvent.Click("left", "up"))
                     dragging = false
-                    // 雙指觸下導致單指拖曳中斷時，觸發按鍵釋放震動
                     onLocalFeedback(LocalFeedbackType.RELEASE_LOCK)
                 }
 
@@ -121,6 +124,15 @@ class GestureEngine(
             3 -> {
                 mode = Mode.THREE_FINGER
                 transitionedFromMultiTouch = true
+
+                // 記錄三指初次按下的平均 Y 座標
+                val p1 = pointers.values.elementAtOrNull(0)
+                val p2 = pointers.values.elementAtOrNull(1)
+                val p3 = pointers.values.elementAtOrNull(2)
+                if (p1 != null && p2 != null && p3 != null) {
+                    threeFingerStartY = (p1.y + p2.y + p3.y) / 3f
+                }
+                threeFingerSwiped = false
             }
         }
     }
@@ -209,7 +221,30 @@ class GestureEngine(
                 }
             }
 
-            Mode.THREE_FINGER, Mode.IDLE -> Unit
+            Mode.THREE_FINGER -> {
+                // 三指移動時，計算平均垂直位移來判定手勢
+                if (!threeFingerSwiped) {
+                    val p1 = pointers.values.elementAtOrNull(0)
+                    val p2 = pointers.values.elementAtOrNull(1)
+                    val p3 = pointers.values.elementAtOrNull(2)
+                    if (p1 != null && p2 != null && p3 != null) {
+                        val currentAvgY = (p1.y + p2.y + p3.y) / 3f
+                        val deltaY = currentAvgY - threeFingerStartY
+
+                        if (deltaY >= swipeThresholdPx) {
+                            // 下滑：回桌面
+                            threeFingerSwiped = true
+                            emit(TouchOutEvent.Gesture("desktop", "down"))
+                        } else if (deltaY <= -swipeThresholdPx) {
+                            // 上滑：還原視窗
+                            threeFingerSwiped = true
+                            emit(TouchOutEvent.Gesture("desktop", "up"))
+                        }
+                    }
+                }
+            }
+
+            Mode.IDLE -> Unit
         }
     }
 
@@ -234,7 +269,6 @@ class GestureEngine(
             Mode.PREDRAG_WAIT -> if (id == firstFingerId) {
                 emit(TouchOutEvent.Click("left", "click"))
                 mode = Mode.IDLE
-                // 尚未拖曳即放開，釋放按鍵
                 onLocalFeedback(LocalFeedbackType.RELEASE_LOCK)
             }
 
@@ -245,7 +279,6 @@ class GestureEngine(
                 emit(TouchOutEvent.Click("left", "up"))
                 dragging = false
                 mode = Mode.IDLE
-                // 結束拖曳，釋放按鍵
                 onLocalFeedback(LocalFeedbackType.RELEASE_LOCK)
             }
 
@@ -268,7 +301,8 @@ class GestureEngine(
             }
 
             Mode.THREE_FINGER -> {
-                if (dist(p) < slopPx * 2f) {
+                // 【關鍵修復】：若期間完全未觸發過滑動手勢，且手指位移在容差內，才判定為「三指點擊」
+                if (!threeFingerSwiped && dist(p) < slopPx * 2f) {
                     emit(TouchOutEvent.Gesture("multitask", "tap"))
                 }
                 mode = Mode.IDLE
@@ -284,6 +318,7 @@ class GestureEngine(
             firstFingerId = null
             dragging = false
             transitionedFromMultiTouch = false
+            threeFingerSwiped = false // 重置狀態
         } else if (pointers.size == 1) {
             val remainingId = pointers.keys.first()
             val remainingPointer = pointers[remainingId]
@@ -315,6 +350,8 @@ class GestureEngine(
         accumulatedDragDx = 0f
         accumulatedDragDy = 0f
         accumulatedScrollDy = 0f
+        threeFingerStartY = 0f
+        threeFingerSwiped = false
     }
 
     private fun startLongPressWatcher(id: Long) {
@@ -323,7 +360,6 @@ class GestureEngine(
             val p = pointers[id] ?: return@launch
             if (pointers.size == 1 && dist(p) < stillPx) {
                 mode = Mode.PREDRAG_WAIT
-                // 長按達標，觸發按鍵鎖定震動
                 onLocalFeedback(LocalFeedbackType.PRESS_LOCK)
             }
         }

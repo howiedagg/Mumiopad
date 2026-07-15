@@ -382,6 +382,12 @@ def apply_gesture(name: str, direction: str):
         with keyboard.pressed(Key.cmd):
             keyboard.press(Key.tab)
             keyboard.release(Key.tab)
+    elif name == "desktop":
+        if direction in ["down", "up"]:
+            # Windows 顯示桌面 / 還原視窗快速鍵：Win + D
+            with keyboard.pressed(Key.cmd):
+                keyboard.press('d')
+                keyboard.release('d')
 
 async def handle_event(msg: dict):
     t = msg.get("type")
