@@ -36,10 +36,12 @@ jobs:
             LATEST_TAG=$(gh release view --json tagName --template '{{.tagName}}' 2>/dev/null || echo "v0.0.0")
             echo "偵測到目前的最新版本號為: $LATEST_TAG"
             
-            # 2. 使用 Python 解析並依「個位數滿 9 進位」規則自動 +1
+            # 2. 將變數導出為環境變數，讓 Python 能夠以最安全的方式讀取
+            export LATEST_TAG
             NEXT_TAG=$(python3 <<'EOF'
-          import sys
-          tag = '$LATEST_TAG'.lstrip('v')
+          import os
+          # 安全讀取環境變數中的最新版本號
+          tag = os.environ.get('LATEST_TAG', '0.0.0').lstrip('v')
           try:
               parts = list(map(int, tag.split('.')))
               if len(parts) != 3: raise ValueError
