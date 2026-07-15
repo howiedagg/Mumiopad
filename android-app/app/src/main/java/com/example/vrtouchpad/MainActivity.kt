@@ -3,6 +3,7 @@ package com.example.vrtouchpad
 import android.graphics.drawable.ColorDrawable
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
@@ -43,9 +44,6 @@ class MainActivity : ComponentActivity() {
             MaterialTheme {
                 val context = androidx.compose.ui.platform.LocalContext.current.applicationContext
 
-                // 【修正】：改用標準 ViewModelProvider.Factory 建立，
-                // 讓 ViewModel 正確掛載在 Activity 的生命週期上，
-                // 避免螢幕旋轉 / 系統重建 Activity 時連線狀態被重置。
                 val viewModel: TouchpadViewModel = viewModel(
                     factory = object : ViewModelProvider.Factory {
                         @Suppress("UNCHECKED_CAST")
@@ -70,7 +68,7 @@ fun AppRoot(viewModel: TouchpadViewModel) {
 
     val mouseSpeed by viewModel.mouseSpeed.collectAsState()
     val scrollSpeed by viewModel.scrollSpeed.collectAsState()
-    val reverseScroll by viewModel.reverseScroll.collectAsState() // 【新增】
+    val reverseScroll by viewModel.reverseScroll.collectAsState()
 
     val pairCodeInput by viewModel.pairCodeInput.collectAsState()
 
@@ -94,6 +92,18 @@ fun AppRoot(viewModel: TouchpadViewModel) {
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose {
             lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
+
+    // 【新增】：攔截 Android 系統原生返回按鍵與手勢
+    // 只有在與電腦連線成功 (CONNECTED) 時此攔截器才會啟用
+    BackHandler(enabled = connState == ConnState.CONNECTED) {
+        if (isKeyboardActive) {
+            // 若虛擬鍵盤正在顯示，返回鍵優先關閉鍵盤
+            viewModel.setKeyboardActive(false)
+        } else {
+            // 鍵盤關閉狀態下，將返回事件轉化為對應 PC 端的上一頁操作
+            viewModel.wsClient.sendKeypress("BROWSER_BACK")
         }
     }
 
@@ -147,7 +157,7 @@ fun AppRoot(viewModel: TouchpadViewModel) {
                 enabled = connState == ConnState.CONNECTED,
                 mouseSpeed = mouseSpeed,
                 scrollSpeed = scrollSpeed,
-                reverseScroll = reverseScroll, // 【新增】
+                reverseScroll = reverseScroll,
                 scope = scope,
                 onOutEvent = { viewModel.wsClient.sendEvent(it) },
             )
@@ -175,10 +185,10 @@ fun AppRoot(viewModel: TouchpadViewModel) {
             SettingsDialog(
                 mouseSpeed = mouseSpeed,
                 scrollSpeed = scrollSpeed,
-                reverseScroll = reverseScroll, // 【新增】
+                reverseScroll = reverseScroll,
                 onMouseSpeedChange = { viewModel.updateMouseSpeed(it) },
                 onScrollSpeedChange = { viewModel.updateScrollSpeed(it) },
-                onReverseScrollChange = { viewModel.updateReverseScroll(it) }, // 【新增】
+                onReverseScrollChange = { viewModel.updateReverseScroll(it) },
                 onDismiss = { showSettings = false }
             )
         }
