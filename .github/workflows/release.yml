@@ -1,0 +1,66 @@
+name: Build and Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version_name:
+        description: '發布版本號 (例如: v1.0.0)'
+        required: true
+        default: 'v1.0.0'
+      changelog:
+        description: '更新日誌 (支援 Markdown，可列點說明)'
+        required: true
+        default: |
+          - 修正已知問題
+          - 優化效能與連線穩定度
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # 確保工作流有權限寫入 Release 頁面
+
+    steps:
+      - name: 檢出專案代碼
+        uses: actions/checkout@v4
+
+      - name: 設定 JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: 設定 Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: 賦予 Gradle 執行權限
+        run: chmod +x android-app/gradlew
+
+      - name: 建置 Android 試用版 APK
+        # 這裡建置 Debug APK，因為它會自動帶有測試憑證，使用者下載後可直接在手機上安裝測試
+        run: |
+          cd android-app
+          ./gradlew assembleDebug
+
+      - name: 重新命名 APK
+        run: |
+          mv android-app/app/build/outputs/apk/debug/app-debug.apk ./Mumiopad-${{ github.event.inputs.version_name }}.apk
+
+      - name: 打包 PC 端 Server 檔案
+        # 排除本機虛擬環境資料夾 (.venv) 以及暫存與設定檔，避免包進不必要的檔案
+        run: |
+          zip -r pc-server-${{ github.event.inputs.version_name }}.zip pc-server-python -x "pc-server-python/.venv/*" "pc-server-python/server_config.json" "pc-server-python/__pycache__/*"
+
+      - name: 建立 GitHub Release 並上傳成品
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.version_name }}
+          name: Mumiopad ${{ github.event.inputs.version_name }}
+          body: ${{ github.event.inputs.changelog }}
+          draft: false
+          prerelease: false
+          files: |
+            Mumiopad-${{ github.event.inputs.version_name }}.apk
+            pc-server-${{ github.event.inputs.version_name }}.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

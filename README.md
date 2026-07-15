@@ -27,17 +27,17 @@ Mumiopad supports standard Windows Precision Touchpad gestures complemented by c
 
 ### 📥 How to Turn Android Phone into Wireless Mouse & Keyboard?
 
+Please head to the **[Releases Page](https://github.com/您的GitHub帳號/您的專案名稱/releases)** to download the latest pre-built assets.
+
 #### Step 1: Run the PC WebSocket Server
-1. Download the `pc-server-python` folder.
-2. Double-click `start.bat`. The server runs in the background and places a management icon in the Windows system tray.
+1. Download `pc-server-vx.x.x.zip` from the release assets and extract it.
+2. Double-click `start.bat`. The server runs in the background and places an icon in the system tray.
 3. *Note: Ensure Python 3 is installed on your computer.*
 
 #### Step 2: Set up the Android Wi-Fi Touchpad App
-1. Install and open the Android App.
+1. Download and install `Mumiopad-vx.x.x.apk` on your Android device.
 2. Make sure your phone and PC are connected to the **same Wi-Fi local network**.
-3. The app will automatically discover nearby PCs running the server. Tap your computer name to connect.
-4. An authorization dialog will pop up on your Windows screen. Click "Yes" to pair.
-5. *Tip: You can manage, disconnect, or unpair authorized devices individually or clear all history directly from the Windows system tray.*
+3. The app will automatically discover nearby PCs. Tap your computer name and click "Yes" on the PC authorization popup.
 
 ---
 
