@@ -1,12 +1,10 @@
 """
-VR Touchpad - PC 端接收伺服器（UUID 極簡零配置版）
+VR Touchpad - PC 端接收伺服器（一鍵授權極簡版）
 """
 
 import asyncio
 import json
-import random
 import socket
-import string
 import sys
 import uuid
 from pathlib import Path
@@ -72,7 +70,6 @@ def load_config() -> dict:
         except Exception:
             pass
     
-    # 首次啟動：自動初始化
     new_config = {
         "server_uuid": str(uuid.uuid4()),
         "authorized_tokens": []
@@ -107,7 +104,6 @@ SERVER_UUID = server_config["server_uuid"]
 
 class ServerState:
     def __init__(self):
-        self.pending_pair_code = "".join(random.choices(string.digits, k=6))
         self.active_connections = set()
 
 state = ServerState()
@@ -162,7 +158,7 @@ def toggle_startup_setting():
         print(f"切換開機啟動失敗: {e}")
 
 # ==========================================
-# 終極平滑游標引擎 (獨立渲染執行緒)
+# 平滑游標引擎 (獨立渲染執行緒)
 # ==========================================
 class SmoothMouseEngine:
     def __init__(self):
@@ -177,15 +173,12 @@ class SmoothMouseEngine:
         self.stiffness = 0.65 
         self.running = True
 
-        # --- 新增：若是 Windows，強制將作業系統排程精度拉高到 1ms ---
         if IS_WINDOWS:
             try:
-                # 請求 Windows 啟用 1 毫秒的高精度計時器週期
                 ctypes.windll.winmm.timeBeginPeriod(1)
                 print("Windows 1ms 高精度計時器已啟用")
             except Exception as e:
                 print(f"無法啟用系統高精度計時器: {e}")
-        # --------------------------------------------------------
         
         self.thread = threading.Thread(target=self._loop, daemon=True)
         self.thread.start()
@@ -196,7 +189,7 @@ class SmoothMouseEngine:
             self.buffer_dy += dy
 
     def _loop(self):
-        sleep_time = 0.008  # 現在 Windows 精度提升後，8ms 休眠將會非常精確
+        sleep_time = 0.008
         while self.running:
             with self.lock:
                 dx = self.buffer_dx
@@ -228,7 +221,6 @@ class SmoothMouseEngine:
             
             time.sleep(sleep_time)
 
-    # 程式關閉時釋放高精度計時器
     def __del__(self):
         if IS_WINDOWS:
             try:
@@ -266,7 +258,6 @@ def apply_click(button: str, action: str):
         elif action == "up":
             mouse.release(btn)
 
-# 滾動累加器
 accumulated_scroll_y = 0.0
 
 def apply_scroll(dy: float):
@@ -278,21 +269,17 @@ def apply_scroll(dy: float):
         accumulated_scroll_y -= steps
         mouse.scroll(0, steps)
 
-
-# 【修正】：相容 64 位元 Windows 的剪貼簿處理，並加入 Fail-safe 退回保護
 def apply_text(value: str):
     if not IS_WINDOWS:
         keyboard.type(value)
         return
 
-    # 必須顯式宣告，避免 Windows API 將 64 位元 Handle 截斷為 32 位元 int
     import ctypes
     from ctypes import wintypes
 
     user32 = ctypes.windll.user32
     kernel32 = ctypes.windll.kernel32
 
-    # --- Windows 64-bit 安全介面宣告 ---
     kernel32.GlobalAlloc.argtypes = [wintypes.UINT, ctypes.c_size_t]
     kernel32.GlobalAlloc.restype = wintypes.HGLOBAL
     kernel32.GlobalLock.argtypes = [wintypes.HGLOBAL]
@@ -312,13 +299,11 @@ def apply_text(value: str):
     user32.SetClipboardData.restype = wintypes.HANDLE
     user32.IsClipboardFormatAvailable.argtypes = [wintypes.UINT]
     user32.IsClipboardFormatAvailable.restype = wintypes.BOOL
-    # ----------------------------------
 
-    # 1. 備份原有剪貼簿內容
     old_text = None
     if user32.OpenClipboard(None):
         try:
-            if user32.IsClipboardFormatAvailable(13): # CF_UNICODETEXT
+            if user32.IsClipboardFormatAvailable(13):
                 h_data = user32.GetClipboardData(13)
                 if h_data:
                     p_data = kernel32.GlobalLock(h_data)
@@ -330,13 +315,12 @@ def apply_text(value: str):
         finally:
             user32.CloseClipboard()
 
-    # 2. 將新文字寫入剪貼簿
     success = False
     if user32.OpenClipboard(None):
         try:
             user32.EmptyClipboard()
             text_bytes = value.encode('utf-16le') + b'\x00\x00'
-            h_global = kernel32.GlobalAlloc(0x0042, len(text_bytes)) # GMEM_MOVEABLE
+            h_global = kernel32.GlobalAlloc(0x0042, len(text_bytes))
             if h_global:
                 p_global = kernel32.GlobalLock(h_global)
                 if p_global:
@@ -349,20 +333,17 @@ def apply_text(value: str):
         finally:
             user32.CloseClipboard()
 
-    # 【保護邏輯】：如果寫入剪貼簿因任何原因失敗，立刻退回到原來的虛擬按鍵模式，確保字一定打得出來
     if not success:
         keyboard.type(value)
         return
 
-    # 3. 模擬 Ctrl + V 貼上
     with keyboard.pressed(Key.ctrl):
         keyboard.press('v')
         keyboard.release('v')
 
-    # 4. 非同步還原剪貼簿
     if old_text is not None:
         def restore_task():
-            time.sleep(0.12)  # 給目標輸入框充足時間完成 Ctrl+V
+            time.sleep(0.12)
             if user32.OpenClipboard(None):
                 try:
                     user32.EmptyClipboard()
@@ -381,9 +362,7 @@ def apply_text(value: str):
 
         threading.Thread(target=restore_task, daemon=True).start()
 
-
 def apply_keypress(key_name: str):
-    # 支援瀏覽器與系統的前進與後退快捷鍵
     if key_name == "BROWSER_BACK":
         with keyboard.pressed(Key.alt):
             keyboard.press(Key.left)
@@ -399,7 +378,6 @@ def apply_keypress(key_name: str):
             keyboard.release(key)
 
 def apply_gesture(name: str, direction: str):
-    # 將 multitask 觸發按鍵修改為僅偵測 "tap"，並執行 Win + Tab (工作檢視)
     if name == "multitask" and direction == "tap":
         with keyboard.pressed(Key.cmd):
             keyboard.press(Key.tab)
@@ -420,6 +398,26 @@ async def handle_event(msg: dict):
     elif t == "gesture":
         apply_gesture(msg.get("name", ""), msg.get("direction", ""))
 
+# --- 彈出式配對詢問對話框（Win32） ---
+def show_pairing_dialog_windows(device_name: str) -> bool:
+    # MB_YESNO (0x4) | MB_ICONQUESTION (0x20) | MB_TOPMOST (0x40000)
+    result = ctypes.windll.user32.MessageBoxW(
+        0, 
+        f"裝置「{device_name}」請求配對並控制此電腦。\n\n是否允許配對？", 
+        "VR Touchpad 配對請求", 
+        0x00000004 | 0x00000020 | 0x00040000
+    )
+    return result == 6  # IDYES = 6
+
+def request_pairing_permission(device_name: str) -> bool:
+    if IS_WINDOWS:
+        try:
+            return show_pairing_dialog_windows(device_name)
+        except Exception as e:
+            print(f"無法顯示 Windows 配對視窗: {e}")
+            return True  # 異常時預設允許，防止流程中斷
+    return True  # 非 Windows 平台預設直接允許以維持簡化操作
+
 async def handler(websocket):
     authed = False
     current_token = None
@@ -427,7 +425,6 @@ async def handler(websocket):
     state.active_connections.add(websocket)
     print(f"新連線要求: {peer}")
 
-    # 強制開啟極低延遲傳輸
     try:
         sock = websocket.transport.get_extra_info('socket')
         if sock is not None:
@@ -446,11 +443,14 @@ async def handler(websocket):
 
             if not authed:
                 if t == "pair_request":
-                    code = msg.get("code")
-                    if state.pending_pair_code and code == state.pending_pair_code:
+                    device_name = msg.get("device_name", f"Device-{peer[0]}")
+                    print(f"收到來自「{device_name}」的配對請求，正在等待用戶授權...")
+                    
+                    # 透過 to_thread 異步呼叫阻斷式對話框，不影響其他網路連線
+                    allowed = await asyncio.to_thread(request_pairing_permission, device_name)
+                    
+                    if allowed:
                         new_token = str(uuid.uuid4())
-                        device_name = msg.get("device_name", f"Device-{peer[0]}")
-                        
                         add_device_token(new_token, device_name)
                         authed = True
                         current_token = new_token
@@ -464,7 +464,10 @@ async def handler(websocket):
                         print(f"配對成功！設備: '{device_name}' 已註冊")
                         update_tray_menu()
                     else:
-                        await websocket.send(json.dumps({"type": "pair_fail", "reason": "invalid_code"}))
+                        await websocket.send(json.dumps({"type": "pair_fail", "reason": "denied"}))
+                        print(f"已拒絕來自「{device_name}」的配對請求")
+                        await websocket.close()
+                        return
                 
                 elif t == "auth":
                     token = msg.get("token")
@@ -519,11 +522,6 @@ def create_icon_image():
     d.ellipse([(26, 26), (38, 38)], fill=(0, 191, 255))
     return image
 
-def refresh_pair_code():
-    state.pending_pair_code = "".join(random.choices(string.digits, k=6))
-    print(f"已更換新配對碼：{state.pending_pair_code}")
-    update_tray_menu()
-
 def update_tray_menu():
     global tray_icon
     if not tray_icon:
@@ -534,9 +532,7 @@ def update_tray_menu():
     
     menu_items = [
         pystray.MenuItem(f"IP: {ip}:{PORT}", action=None, enabled=False),
-        pystray.MenuItem(f"當前配對碼: {state.pending_pair_code}", action=None, enabled=False),
         pystray.MenuItem(f"已信任裝置: {paired_count} 台", action=None, enabled=False),
-        pystray.MenuItem("重新產生配對碼", lambda: refresh_pair_code()),
         pystray.MenuItem("清除所有歷史信任裝置", lambda: clear_all_pairings()),
         pystray.Menu.SEPARATOR
     ]

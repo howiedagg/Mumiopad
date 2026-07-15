@@ -18,11 +18,6 @@ import javax.net.SocketFactory
 
 enum class ConnState { DISCONNECTED, CONNECTING, PAIRING, CONNECTED, AUTH_FAILED }
 
-/**
- * 【新增】：強制關閉 Nagle 演算法的 SocketFactory。
- * 觸控板傳輸屬於「高頻小封包」情境，Nagle + 延遲 ACK 交互作用
- * 會造成週期性的 ~40ms 延遲堆積，關閉後可明顯改善微卡頓。
- */
 private class NoDelaySocketFactory : SocketFactory() {
     private fun Socket.applyNoDelay(): Socket = apply { tcpNoDelay = true }
 
@@ -54,13 +49,14 @@ class TouchpadWebSocketClient(
     private var ws: WebSocket? = null
     private val client = OkHttpClient.Builder()
         .pingInterval(5, TimeUnit.SECONDS)
-        .socketFactory(NoDelaySocketFactory()) // 【新增】：關閉 Nagle
+        .socketFactory(NoDelaySocketFactory())
         .build()
 
     private val mainHandler = Handler(Looper.getMainLooper())
     private var isPairingMode = false
 
-    fun connectForPairing(host: String, port: Int, pairCode: String) {
+    // 移除 pairCode，改由 PC 端手動點擊「允許」進行一鍵配對
+    fun connectForPairing(host: String, port: Int) {
         isPairingMode = true
         onStateChange(ConnState.CONNECTING)
         open(host, port) { activeWs ->
@@ -69,7 +65,6 @@ class TouchpadWebSocketClient(
             val deviceName = "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}"
             val json = JSONObject().apply {
                 put("type", "pair_request")
-                put("code", pairCode)
                 put("device_name", deviceName)
             }
             activeWs.send(json.toString())
@@ -175,8 +170,6 @@ class TouchpadWebSocketClient(
     }
 
     fun sendEvent(event: TouchOutEvent) {
-        // 【核心效能優化】：使用原生字串模板替換高頻率使用的 JSONObject。
-        // 這避免了在 100Hz 高頻發送位移時不斷觸發記憶體垃圾回收(GC)，徹底移除了 Android 手機端的微小幀延遲。
         val jsonStr = when (event) {
             is TouchOutEvent.Move ->
                 """{"type":"move","dx":${event.dx},"dy":${event.dy}}"""

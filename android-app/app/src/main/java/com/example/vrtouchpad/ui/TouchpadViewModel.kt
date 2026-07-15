@@ -31,7 +31,6 @@ class TouchpadViewModel(context: Context) : ViewModel() {
     private val _savedServers = MutableStateFlow<List<SavedServer>>(emptyList())
     val savedServers: StateFlow<List<SavedServer>> = _savedServers
 
-    // 【修改】：以單一 sealed class 取代原本 showPairDialog + targetServerToPair 兩個旗標
     private val _pairingNavState = MutableStateFlow<PairingNavState>(PairingNavState.Hidden)
     val pairingNavState: StateFlow<PairingNavState> = _pairingNavState
 
@@ -56,14 +55,8 @@ class TouchpadViewModel(context: Context) : ViewModel() {
     private val _reverseScroll = MutableStateFlow(settingsStore.reverseScroll)
     val reverseScroll: StateFlow<Boolean> = _reverseScroll
 
-    private val _pairCodeInput = MutableStateFlow("")
-    val pairCodeInput: StateFlow<String> = _pairCodeInput
-
     private var isAppActive = true
     private var supervisorJob: Job? = null
-
-    // 【新增】：業務邏輯用來記住「正在配對哪一台」，與 UI 導覽狀態脫鉤，
-    // 避免 WebSocket callback 需要反查 pairingNavState 目前的值才能運作。
     private var pendingPairServer: DiscoveredServer? = null
 
     val wsClient = TouchpadWebSocketClient(
@@ -94,8 +87,8 @@ class TouchpadViewModel(context: Context) : ViewModel() {
         onPairFail = { reason ->
             _isPairingBusy.value = false
             _pairingError.value = when (reason) {
-                "invalid_code" -> "配對驗證碼錯誤，請重新確認電腦端畫面"
-                "network_error" -> "連線失敗，請確認手機與電腦处于相同 Wi-Fi 網路"
+                "denied" -> "連線被拒絕。請在電腦上點選「是」"
+                "network_error" -> "連線失敗，請確認手機與電腦處於相同 Wi-Fi 網路"
                 else -> "配對失敗: $reason"
             }
             _connState.value = ConnState.DISCONNECTED
@@ -146,23 +139,21 @@ class TouchpadViewModel(context: Context) : ViewModel() {
         settingsStore.reverseScroll = reverse
     }
 
-    fun updatePairCode(code: String) {
-        _pairCodeInput.value = code
-    }
-
-    // 【修改】：觸發配對＝切換到 EnteringCode 狀態，同時記錄 pendingPairServer 供 callback 使用
+    // 點擊未配對電腦時：直接發起一鍵連線，並顯示等待頁面
     fun triggerPairing(server: DiscoveredServer) {
         pendingPairServer = server
         _pairingError.value = null
-        _pairCodeInput.value = ""
-        _pairingNavState.value = PairingNavState.EnteringCode(server)
+        _pairingNavState.value = PairingNavState.PairingWaiting(server)
+        _isPairingBusy.value = true
+        wsClient.connectForPairing(server.host, server.port)
     }
 
-    // 【修改】：取消輸入配對碼＝回到裝置清單，而不是整個關閉
+    // 取消配對時：斷開 WebSocket，返回裝置清單
     fun cancelPairing() {
+        wsClient.close()
         pendingPairServer = null
         _pairingError.value = null
-        _pairCodeInput.value = ""
+        _isPairingBusy.value = false
         _pairingNavState.value = PairingNavState.DeviceList
     }
 
@@ -188,23 +179,13 @@ class TouchpadViewModel(context: Context) : ViewModel() {
         refreshServerLists()
     }
 
-    // 【修改】：完全關閉配對相關畫面
     fun closeServerSelector() {
         pendingPairServer = null
         _pairingNavState.value = PairingNavState.Hidden
     }
 
-    fun startPairing(code: String) {
-        val server = pendingPairServer ?: return
-        _isPairingBusy.value = true
-        _pairingError.value = null
-        wsClient.connectForPairing(server.host, server.port, code.trim())
-    }
-
-    // 【修改】：開啟裝置清單畫面（首次引導畫面、狀態列點擊都會呼叫這個）
     fun openServerSelector() {
         _pairingError.value = null
-        _pairCodeInput.value = ""
         pendingPairServer = null
         refreshServerLists()
         _pairingNavState.value = PairingNavState.DeviceList
