@@ -11,9 +11,7 @@ on:
         description: '更新日誌 (支援 Markdown，可列點說明)'
         required: true
         default: |
-          - Fixed known issues
-          - Optimize performance and connection
-
+          - Fixed known issues <br> - Optimize performance
 jobs:
   # 任務一：自動解析或計算版本號
   resolve-version:
