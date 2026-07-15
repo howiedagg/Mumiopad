@@ -282,20 +282,27 @@ def apply_text(value: str):
     keyboard.type(value)
 
 def apply_keypress(key_name: str):
-    key = SPECIAL_KEYS.get(key_name)
-    if key:
-        keyboard.press(key)
-        keyboard.release(key)
+    # 支援瀏覽器與系統的前進與後退快捷鍵
+    if key_name == "BROWSER_BACK":
+        with keyboard.pressed(Key.alt):
+            keyboard.press(Key.left)
+            keyboard.release(Key.left)
+    elif key_name == "BROWSER_FORWARD":
+        with keyboard.pressed(Key.alt):
+            keyboard.press(Key.right)
+            keyboard.release(Key.right)
+    else:
+        key = SPECIAL_KEYS.get(key_name)
+        if key:
+            keyboard.press(key)
+            keyboard.release(key)
 
 def apply_gesture(name: str, direction: str):
-    if name == "switch_desktop":
-        with keyboard.pressed(Key.ctrl, Key.cmd):
-            if direction == "left":
-                keyboard.press(Key.left)
-                keyboard.release(Key.left)
-            elif direction == "right":
-                keyboard.press(Key.right)
-                keyboard.release(Key.right)
+    # 【修改】：將 multitask 觸發按鍵修改為僅偵測 "tap"，並執行 Win + Tab (工作檢視)
+    if name == "multitask" and direction == "tap":
+        with keyboard.pressed(Key.cmd):
+            keyboard.press(Key.tab)
+            keyboard.release(Key.tab)
 
 async def handle_event(msg: dict):
     t = msg.get("type")
