@@ -8,10 +8,10 @@ on:
         required: true
         default: 'auto'
       changelog:
-        description: '更新日誌 (支援 Markdown，可列點說明)'
+        description: '更新日誌 (輸入 \n 來進行圓點換行)'
         required: true
-        default: |
-          - Fixed known issues <br> - Optimize performance
+        default: '- 修正已知問題 \n - 優化效能與連線穩定度'
+
 jobs:
   # 任務一：自動解析或計算版本號
   resolve-version:
@@ -149,6 +149,20 @@ jobs:
           name: pc-server-exe
           path: ./server-output
 
+      - name: 處理日誌換行符號
+        id: process_changelog
+        env:
+          RAW_BODY: ${{ github.event.inputs.changelog }}
+        run: |
+          # 使用 Python 將字面上的 \n 安全替換為實體換行鍵
+          echo "formatted_body<<EOF" >> $GITHUB_OUTPUT
+          python3 -c '
+          import os
+          body = os.environ.get("RAW_BODY", "")
+          print(body.replace("\\n", "\n"))
+          ' >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
       - name: 整理上傳檔名
         run: |
           mv ./apk-output/app-debug.apk ./Mumiopad-${{ needs.resolve-version.outputs.version }}.apk
@@ -159,7 +173,7 @@ jobs:
         with:
           tag_name: ${{ needs.resolve-version.outputs.version }}
           name: Mumiopad ${{ needs.resolve-version.outputs.version }}
-          body: ${{ github.event.inputs.changelog }}
+          body: ${{ steps.process_changelog.outputs.formatted_body }}
           draft: false
           prerelease: false
           files: |
