@@ -122,7 +122,7 @@ jobs:
       - name: 使用 PyInstaller 編譯為獨立 Exe
         run: |
           cd pc-server-python
-          pyinstaller --onefile --noconsole --name MumiopadServer server.py
+          pyinstaller --onefile --noconsole --name MumiopadServer main.py
 
       - name: 暫存 Server Exe 檔案
         uses: actions/upload-artifact@v4
