@@ -180,23 +180,28 @@ fun AppRoot(viewModel: TouchpadViewModel) {
         }
     }
 
-    val showOnboarding = savedServers.isEmpty() &&
-            connState != ConnState.CONNECTED &&
-            pairingNavState == PairingNavState.Hidden
+    // 當完全無歷史連線紀錄，且未連線成功時，進入極簡引導流程
+    val showOnboarding = savedServers.isEmpty() && connState != ConnState.CONNECTED
 
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize()) {
-            StatusBar(
-                connState = connState,
-                isKeyboardOpen = isKeyboardActive,
-                onSettingsClick = { showSettings = true },
-                onStatusClick = { viewModel.openServerSelector() },
-                onToggleKeyboard = { viewModel.toggleKeyboard() }
-            )
 
+            // 只有在非初次配對引導期（已綁定歷史裝置）時，才顯示狀態欄膠囊
+            if (!showOnboarding) {
+                StatusBar(
+                    connState = connState,
+                    isKeyboardOpen = isKeyboardActive,
+                    onSettingsClick = { showSettings = true },
+                    onStatusClick = { viewModel.openServerSelector() },
+                    onToggleKeyboard = { viewModel.toggleKeyboard() }
+                )
+            }
+
+            // 新發現裝置通知：當不在 Onboarding 引導、且不在選單內時，若有未配對裝置才顯示
             if (connState != ConnState.CONNECTED &&
                 pairingNavState == PairingNavState.Hidden &&
-                unpairedDiscovered.isNotEmpty()
+                unpairedDiscovered.isNotEmpty() &&
+                !showOnboarding
             ) {
                 DiscoveredDeviceSnackbar(
                     deviceCount = unpairedDiscovered.size,
@@ -213,9 +218,16 @@ fun AppRoot(viewModel: TouchpadViewModel) {
             )
 
             if (showOnboarding) {
+                // 初次引導：免對話框彈出，全螢幕內嵌控制
                 WelcomeOnboarding(
                     modifier = Modifier.weight(1f).fillMaxWidth(),
-                    onFindComputer = { viewModel.openServerSelector() },
+                    unpairedDiscovered = unpairedDiscovered,
+                    isScanning = isScanning,
+                    isPairingBusy = isPairingBusy,
+                    pairingError = pairingError,
+                    pairingNavState = pairingNavState,
+                    onStartPairing = { server -> viewModel.triggerPairing(server) },
+                    onCancelPairing = { viewModel.cancelPairing() }
                 )
             } else {
                 Touchpad(
@@ -231,19 +243,22 @@ fun AppRoot(viewModel: TouchpadViewModel) {
             }
         }
 
-        PairingHost(
-            navState = pairingNavState,
-            savedServers = savedServers,
-            unpairedDiscovered = unpairedDiscovered,
-            isScanning = isScanning,
-            isPairingBusy = isPairingBusy,
-            pairingError = pairingError,
-            onSelectSaved = { uuid -> viewModel.selectServer(uuid) },
-            onDeleteSaved = { uuid -> viewModel.deleteServer(uuid) },
-            onStartPairing = { server -> viewModel.triggerPairing(server) },
-            onBackToList = { viewModel.cancelPairing() },
-            onDismiss = { viewModel.closeServerSelector() },
-        )
+        // 當已配對過歷史裝置時，才在視窗上啟用管理與切換的對話框 PairingHost
+        if (!showOnboarding) {
+            PairingHost(
+                navState = pairingNavState,
+                savedServers = savedServers,
+                unpairedDiscovered = unpairedDiscovered,
+                isScanning = isScanning,
+                isPairingBusy = isPairingBusy,
+                pairingError = pairingError,
+                onSelectSaved = { uuid -> viewModel.selectServer(uuid) },
+                onDeleteSaved = { uuid -> viewModel.deleteServer(uuid) },
+                onStartPairing = { server -> viewModel.triggerPairing(server) },
+                onBackToList = { viewModel.cancelPairing() },
+                onDismiss = { viewModel.closeServerSelector() },
+            )
+        }
 
         if (showSettings) {
             SettingsDialog(

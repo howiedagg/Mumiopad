@@ -25,8 +25,8 @@ class NetworkDiscovery:
         ip = get_lan_ip()
         properties = {"pc_name": socket.gethostname()}
         self.mdns_info = ServiceInfo(
-            "_vrtouchpad._tcp.local.",
-            f"VRTouchpad_{self.server_uuid}._vrtouchpad._tcp.local.",
+            "_mumiopad._tcp.local.",
+            f"Mumiopad_{self.server_uuid}._mumiopad._tcp.local.",
             addresses=[socket.inet_aton(ip)],
             port=PORT,
             properties=properties,

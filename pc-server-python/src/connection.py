@@ -22,7 +22,7 @@ class ConnectionManager:
             result = ctypes.windll.user32.MessageBoxW(
                 0, 
                 f"裝置「{device_name}」請求配對並控制此電腦。\n\n是否允許配對？", 
-                "VR Touchpad 配對請求", 
+                "Mumiopad 配對請求", 
                 0x00000004 | 0x00000020 | 0x00040000
             )
             return result == 6  # IDYES = 6

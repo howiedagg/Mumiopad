@@ -1,3 +1,4 @@
+// android-app/app/src/main/java/com/example/vrtouchpad/data/PairingManager.kt
 package com.example.vrtouchpad.data
 
 import android.content.Context
@@ -9,13 +10,11 @@ import androidx.security.crypto.MasterKey
 import org.json.JSONArray
 import org.json.JSONObject
 
-private const val SERVICE_TYPE = "_vrtouchpad._tcp."
+private const val SERVICE_TYPE = "_mumiopad._tcp."
 private const val PREFS_NAME = "vrtouchpad_secure_tokens"
 private const val KEY_SERVER_LIST = "server_profiles_list"
 private const val KEY_SELECTED_UUID = "selected_server_uuid"
 
-// 新增 lastKnownIp：上次成功連上這台電腦時的 IP，給 ConnectionOrchestrator 的熱直連捷徑用。
-// 預設 null，代表「還沒成功連過，或還沒有機會記錄」。
 data class SavedServer(
     val uuid: String,
     val name: String,
@@ -46,7 +45,6 @@ class PairingManager(private val context: Context) {
         }
     }
 
-    // 獲取所有已授權綁定的 PC 清冊
     fun getSavedServers(): List<SavedServer> {
         val jsonStr = prefs.getString(KEY_SERVER_LIST, "[]") ?: "[]"
         val list = mutableListOf<SavedServer>()
@@ -69,7 +67,6 @@ class PairingManager(private val context: Context) {
         return list
     }
 
-    // 儲存或更新單一電腦憑證（配對成功時呼叫，此時還沒有 lastKnownIp 也沒關係）
     fun saveServer(uuid: String, name: String, token: String) {
         val currentList = getSavedServers().toMutableList()
         val index = currentList.indexOfFirst { it.uuid == uuid }
@@ -82,7 +79,6 @@ class PairingManager(private val context: Context) {
         writeListToPrefs(currentList)
     }
 
-    // 每次成功連線後呼叫，更新這台電腦「上次連上時的 IP」
     fun updateLastKnownIp(uuid: String, ip: String) {
         val currentList = getSavedServers().toMutableList()
         val index = currentList.indexOfFirst { it.uuid == uuid }
@@ -92,7 +88,6 @@ class PairingManager(private val context: Context) {
         }
     }
 
-    // 單點刪除特定電腦
     fun deleteServer(uuid: String) {
         val currentList = getSavedServers().filter { it.uuid != uuid }
         writeListToPrefs(currentList)
@@ -125,7 +120,6 @@ class PairingManager(private val context: Context) {
         prefs.edit().putString(KEY_SERVER_LIST, array.toString()).apply()
     }
 
-    // --- mDNS 網路探索服務（跟原本完全一樣，沒有改動） ---
     @Suppress("DEPRECATION")
     fun discover(
         timeoutMs: Long = 4000,
@@ -161,8 +155,8 @@ class PairingManager(private val context: Context) {
                 if (finished) return
 
                 val name = service.serviceName ?: return
-                if (!name.startsWith("VRTouchpad_")) return
-                val uuidPart = name.substringAfter("VRTouchpad_").substringBefore(".")
+                if (!name.startsWith("Mumiopad_")) return
+                val uuidPart = name.substringAfter("Mumiopad_").substringBefore(".")
 
                 nsdManager.resolveService(service, object : NsdManager.ResolveListener {
                     override fun onResolveFailed(info: NsdServiceInfo?, errorCode: Int) {}

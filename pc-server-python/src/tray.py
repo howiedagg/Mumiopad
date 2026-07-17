@@ -10,7 +10,7 @@ if IS_WINDOWS:
     import winreg
 
 REG_RUN_PATH = r"Software\Microsoft\Windows\CurrentVersion\Run"
-REG_APP_NAME = "VRTouchpadServer"
+REG_APP_NAME = "MumiopadServer"
 
 class TrayIconManager:
     def __init__(self, on_exit_callback):
@@ -107,7 +107,7 @@ class TrayIconManager:
 
     def run(self):
         icon_img = self.create_icon_image()
-        self.tray_icon = pystray.Icon("VRTouchpad", icon_img, "VR Touchpad Server")
+        self.tray_icon = pystray.Icon("Mumiopad", icon_img, "Mumiopad Server")
         self.update_menu()
         self.tray_icon.run()
 

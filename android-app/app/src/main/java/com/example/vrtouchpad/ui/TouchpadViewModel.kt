@@ -106,7 +106,7 @@ class TouchpadViewModel(
         getLastKnownIp = { uuid -> pairingManager.getSavedServers().find { it.uuid == uuid }?.lastKnownIp },
         updateLastKnownIp = { uuid, ip -> pairingManager.updateLastKnownIp(uuid, ip) },
         discover = { timeoutMs, onFound, onFinished ->
-            // 【整合點】：在協調器發起掃描時，攔截新發現的電腦資訊
+            // 【整合點】：在背景協調器發起掃描時，攔截新發現的未配對電腦資訊
             pairingManager.discover(
                 timeoutMs = timeoutMs,
                 onFound = { server ->
@@ -129,14 +129,22 @@ class TouchpadViewModel(
     init {
         refreshServerLists()
 
+        // 為了使初次引導畫面一開啟時能「免點選、自動進行掃描探索」
+        if (pairingManager.getSavedServers().isEmpty()) {
+            startPairingScan()
+        } else {
+            // 只有在已有儲存電腦時，才啟動自動連線協調器，防止初次使用時產生掃描衝突
+            orchestrator.start()
+        }
+
         viewModelScope.launch {
             orchestrator.phase.collect { phase ->
-                if (_pairingNavState.value != PairingNavState.Hidden) return@collect
+                if (_pairingNavState.value != PairingNavState.Hidden && _savedServers.value.isEmpty()) return@collect
                 _connState.value = when (phase) {
                     is ConnectionOrchestrator.Phase.Idle -> ConnState.DISCONNECTED
                     is ConnectionOrchestrator.Phase.Connecting -> ConnState.CONNECTING
                     is ConnectionOrchestrator.Phase.Connected -> {
-                        _unpairedDiscovered.value = emptyList()
+                        _unpairedDiscovered.value = emptyList() // 連上後清空新發現暫存
                         ConnState.CONNECTED
                     }
                 }
@@ -163,8 +171,6 @@ class TouchpadViewModel(
                 }
             }
         }
-
-        orchestrator.start()
     }
 
     private suspend fun dialAdapter(host: String, port: Int, token: String): Boolean {
@@ -188,7 +194,10 @@ class TouchpadViewModel(
     fun updateAppActive(active: Boolean) {
         isAppActive = active
         if (active) {
-            orchestrator.start()
+            // 只有在有名冊紀錄時，重新回到前景才需啟用協調器
+            if (pairingManager.getSavedServers().isNotEmpty()) {
+                orchestrator.start()
+            }
         } else {
             orchestrator.stop()
             wsClient.close()
@@ -235,7 +244,13 @@ class TouchpadViewModel(
         _pairingError.value = null
         _isPairingBusy.value = false
         _pairingNavState.value = PairingNavState.DeviceList
-        orchestrator.start()
+
+        // 取消配對時，若有名冊則啟動協調器，否則只啟用基礎配對掃描
+        if (pairingManager.getSavedServers().isEmpty()) {
+            startPairingScan()
+        } else {
+            orchestrator.start()
+        }
     }
 
     fun selectServer(uuid: String) {
@@ -265,7 +280,11 @@ class TouchpadViewModel(
     fun closeServerSelector() {
         pendingPairServer = null
         _pairingNavState.value = PairingNavState.Hidden
-        orchestrator.start()
+
+        // 關閉管理選單時，若有名冊才重啟連線協調器
+        if (pairingManager.getSavedServers().isNotEmpty()) {
+            orchestrator.start()
+        }
     }
 
     fun openServerSelector() {
@@ -299,7 +318,9 @@ class TouchpadViewModel(
     }
 
     fun forceReconnect() {
-        orchestrator.start()
+        if (pairingManager.getSavedServers().isNotEmpty()) {
+            orchestrator.start()
+        }
     }
 
     override fun onCleared() {
