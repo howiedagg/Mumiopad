@@ -1,10 +1,14 @@
 package com.example.vrtouchpad
 
+import androidx.compose.runtime.rememberCoroutineScope
+import android.Manifest
+import android.content.pm.PackageManager
 import android.os.Bundle
-import android.view.KeyEvent // 【新增】：匯入實體按鍵事件類別
+import android.view.KeyEvent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -16,9 +20,9 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.core.content.ContextCompat
 import androidx.core.graphics.drawable.toDrawable
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -39,13 +43,29 @@ import com.example.vrtouchpad.ui.dialogs.SettingsDialog
 import com.example.vrtouchpad.network.ConnState
 
 class MainActivity : ComponentActivity() {
-    // 【新增】：將 viewModel 宣告為類別變數以便在 onKeyDown 中呼叫
     private lateinit var touchpadViewModel: TouchpadViewModel
+
+    // 【新增】：註冊權限請求回呼 (用來處理使用者點擊「允許」或「拒絕」後的動作)
+    private val requestPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { permissions ->
+        val fineGranted = permissions[Manifest.permission.ACCESS_FINE_LOCATION] ?: false
+        val coarseGranted = permissions[Manifest.permission.ACCESS_COARSE_LOCATION] ?: false
+        if (fineGranted || coarseGranted) {
+            // 使用者允許了定位權限，重新嘗試連線以獲取 BSSID 進行快速直連
+            if (::touchpadViewModel.isInitialized) {
+                touchpadViewModel.forceReconnect()
+            }
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
         window.setBackgroundDrawable(0xFF1E1E1E.toInt().toDrawable())
+
+        // 【核心新增】：檢查定位權限，若尚未取得則彈出系統詢問視窗
+        checkAndRequestLocationPermissions()
 
         setContent {
             MaterialTheme {
@@ -64,7 +84,28 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    // 【核心新增】：監聽實體按鍵事件
+    // 【新增】：檢查並向使用者請求定位權限的方法
+    private fun checkAndRequestLocationPermissions() {
+        val hasFine = ContextCompat.checkSelfPermission(
+            this, Manifest.permission.ACCESS_FINE_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED
+
+        val hasCoarse = ContextCompat.checkSelfPermission(
+            this, Manifest.permission.ACCESS_COARSE_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED
+
+        // 如果兩個權限都沒有，則向使用者發起詢問
+        if (!hasFine && !hasCoarse) {
+            requestPermissionLauncher.launch(
+                arrayOf(
+                    Manifest.permission.ACCESS_FINE_LOCATION,
+                    Manifest.permission.ACCESS_COARSE_LOCATION
+                )
+            )
+        }
+    }
+
+    // 監聽實體按鍵事件
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
         // 只有在 ViewModel 已初始化且「已成功連線電腦」時，才進行實體音量鍵攔截
         if (::touchpadViewModel.isInitialized && touchpadViewModel.connState.value == ConnState.CONNECTED) {
@@ -79,7 +120,6 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
-        // 如果未連線，則走系統預設邏輯，正常調整手機媒體音量
         return super.onKeyDown(keyCode, event)
     }
 }
