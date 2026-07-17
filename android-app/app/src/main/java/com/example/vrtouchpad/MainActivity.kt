@@ -1,7 +1,10 @@
+// D:/howie/Documents/vr-touchpad-app/vr-touchpad-app/android-app/app/src/main/java/com/example/vrtouchpad/MainActivity.kt
+
 package com.example.vrtouchpad
 
-import androidx.compose.runtime.rememberCoroutineScope
 import android.Manifest
+import androidx.compose.runtime.rememberCoroutineScope
+import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Bundle
 import android.view.KeyEvent
@@ -42,17 +45,41 @@ import com.example.vrtouchpad.ui.dialogs.PairingHost
 import com.example.vrtouchpad.ui.dialogs.SettingsDialog
 import com.example.vrtouchpad.network.ConnState
 
+import com.example.vrtouchpad.data.PairingManager
+import com.example.vrtouchpad.data.SettingsStore
+import com.example.vrtouchpad.data.WifiPerformanceManager
+import com.example.vrtouchpad.data.WifiNetworkIdProvider
+import com.example.vrtouchpad.data.NetworkProfileStore
+
+class TouchpadViewModelFactory(private val context: Context) : ViewModelProvider.Factory {
+    @Suppress("UNCHECKED_CAST")
+    override fun <T : ViewModel> create(modelClass: Class<T>): T {
+        val appContext = context.applicationContext
+        val pairingManager = PairingManager(appContext)
+        val settingsStore = SettingsStore(appContext)
+        val wifiPerformanceManager = WifiPerformanceManager(appContext)
+        val wifiNetworkIdProvider = WifiNetworkIdProvider(appContext)
+        val networkProfileStore = NetworkProfileStore(appContext)
+
+        return TouchpadViewModel(
+            pairingManager = pairingManager,
+            settingsStore = settingsStore,
+            wifiPerformanceManager = wifiPerformanceManager,
+            wifiNetworkIdProvider = wifiNetworkIdProvider,
+            networkProfileStore = networkProfileStore
+        ) as T
+    }
+}
+
 class MainActivity : ComponentActivity() {
     private lateinit var touchpadViewModel: TouchpadViewModel
 
-    // 【新增】：註冊權限請求回呼 (用來處理使用者點擊「允許」或「拒絕」後的動作)
     private val requestPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
         val fineGranted = permissions[Manifest.permission.ACCESS_FINE_LOCATION] ?: false
         val coarseGranted = permissions[Manifest.permission.ACCESS_COARSE_LOCATION] ?: false
         if (fineGranted || coarseGranted) {
-            // 使用者允許了定位權限，重新嘗試連線以獲取 BSSID 進行快速直連
             if (::touchpadViewModel.isInitialized) {
                 touchpadViewModel.forceReconnect()
             }
@@ -61,30 +88,19 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
         window.setBackgroundDrawable(0xFF1E1E1E.toInt().toDrawable())
-
-        // 【核心新增】：檢查定位權限，若尚未取得則彈出系統詢問視窗
         checkAndRequestLocationPermissions()
 
         setContent {
             MaterialTheme {
-                val context = androidx.compose.ui.platform.LocalContext.current.applicationContext
-
-                touchpadViewModel = viewModel(
-                    factory = object : ViewModelProvider.Factory {
-                        @Suppress("UNCHECKED_CAST")
-                        override fun <T : ViewModel> create(modelClass: Class<T>): T {
-                            return TouchpadViewModel(context) as T
-                        }
-                    }
-                )
+                val context = androidx.compose.ui.platform.LocalContext.current
+                val factory = remember { TouchpadViewModelFactory(context) }
+                touchpadViewModel = viewModel(factory = factory)
                 AppRoot(touchpadViewModel)
             }
         }
     }
 
-    // 【新增】：檢查並向使用者請求定位權限的方法
     private fun checkAndRequestLocationPermissions() {
         val hasFine = ContextCompat.checkSelfPermission(
             this, Manifest.permission.ACCESS_FINE_LOCATION
@@ -94,7 +110,6 @@ class MainActivity : ComponentActivity() {
             this, Manifest.permission.ACCESS_COARSE_LOCATION
         ) == PackageManager.PERMISSION_GRANTED
 
-        // 如果兩個權限都沒有，則向使用者發起詢問
         if (!hasFine && !hasCoarse) {
             requestPermissionLauncher.launch(
                 arrayOf(
@@ -105,18 +120,16 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    // 監聽實體按鍵事件
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
-        // 只有在 ViewModel 已初始化且「已成功連線電腦」時，才進行實體音量鍵攔截
         if (::touchpadViewModel.isInitialized && touchpadViewModel.connState.value == ConnState.CONNECTED) {
             when (keyCode) {
                 KeyEvent.KEYCODE_VOLUME_UP -> {
                     touchpadViewModel.wsClient.sendKeypress("VOLUME_UP")
-                    return true // 傳回 true，阻止手機本身音量條彈出
+                    return true
                 }
                 KeyEvent.KEYCODE_VOLUME_DOWN -> {
                     touchpadViewModel.wsClient.sendKeypress("VOLUME_DOWN")
-                    return true // 傳回 true，阻止手機本身音量條彈出
+                    return true
                 }
             }
         }
