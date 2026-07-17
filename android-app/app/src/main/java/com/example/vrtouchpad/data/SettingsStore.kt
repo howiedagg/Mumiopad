@@ -3,7 +3,7 @@ package com.example.vrtouchpad.data
 import android.content.Context
 
 class SettingsStore(context: Context) {
-    private val prefs = context.getSharedPreferences("vrtouchpad_settings", Context.MODE_PRIVATE)
+    private val prefs = context.getSharedPreferences("mumiopad_settings", Context.MODE_PRIVATE)
 
     var mouseSpeed: Float
         get() = prefs.getFloat("mouse_speed", 1.0f)

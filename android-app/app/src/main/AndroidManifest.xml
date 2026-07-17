@@ -17,7 +17,7 @@
 
     <application
         android:allowBackup="false"
-        android:label="VR Touchpad"
+        android:label="Mumiopad"
         android:theme="@style/Theme.VRTouchpad"
         android:icon="@android:drawable/ic_menu_manage"
         android:usesCleartextTraffic="true">

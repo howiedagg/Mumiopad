@@ -3,7 +3,7 @@ package com.example.vrtouchpad.data
 import android.content.Context
 import org.json.JSONObject
 
-private const val PREFS_NAME = "vrtouchpad_network_profiles"
+private const val PREFS_NAME = "mumiopad_network_profiles"
 private const val KEY_MAP = "bssid_to_server_uuid"
 
 /**

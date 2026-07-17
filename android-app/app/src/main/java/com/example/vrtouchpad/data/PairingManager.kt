@@ -11,7 +11,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 private const val SERVICE_TYPE = "_mumiopad._tcp."
-private const val PREFS_NAME = "vrtouchpad_secure_tokens"
+private const val PREFS_NAME = "mumiopad_secure_tokens"
 private const val KEY_SERVER_LIST = "server_profiles_list"
 private const val KEY_SELECTED_UUID = "selected_server_uuid"
 
