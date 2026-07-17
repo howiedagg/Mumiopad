@@ -1,3 +1,5 @@
+// D:/howie/Documents/vr-touchpad-app/vr-touchpad-app/android-app/app/src/main/java/com/example/vrtouchpad/network/WebSocketClient.kt
+
 package com.example.vrtouchpad.network
 
 import android.util.Log
@@ -41,14 +43,6 @@ private class NoDelaySocketFactory : SocketFactory() {
         Socket(address, port, localAddress, localPort).applyNoDelay()
 }
 
-/**
- * 狀態改用 StateFlow 廣播（[connState]），任何人都可以訂閱，
- * 彼此不需要知道對方存在：ViewModel 訂閱來更新畫面，
- * ConnectionOrchestrator 訂閱來判斷一次 dial 有沒有成功。
- *
- * 配對流程（pair_request / pair_success / pair_fail）只有 ViewModel 會用到，
- * 沿用建構子 callback 即可，不需要一併搬去 StateFlow。
- */
 class TouchpadWebSocketClient(
     private val onPairSuccess: (token: String, pcName: String) -> Unit,
     private val onPairFail: (reason: String) -> Unit
@@ -65,6 +59,10 @@ class TouchpadWebSocketClient(
     private var isPairingMode = false
 
     fun connectForPairing(host: String, port: Int) {
+        // 【修正 1】：在變更 pairing 標記前，先徹底關閉並清理舊連線。
+        // 這能確保舊連線因關閉而觸發的 onFailure 不會被誤判為配對失敗。
+        close()
+
         isPairingMode = true
         _connState.value = ConnState.CONNECTING
         open(host, port) { activeWs ->
@@ -81,6 +79,9 @@ class TouchpadWebSocketClient(
     }
 
     fun connectWithToken(host: String, port: Int, token: String) {
+        // 【修正 1】：先關閉並清理舊連線
+        close()
+
         isPairingMode = false
         _connState.value = ConnState.CONNECTING
         open(host, port) { activeWs ->
@@ -94,7 +95,7 @@ class TouchpadWebSocketClient(
     }
 
     private fun open(host: String, port: Int, onOpenSend: (WebSocket) -> Unit) {
-        close()
+        // 【修正 1】：原有的 close() 已移至上方呼叫端，避免此處非同步賽跑
 
         val urlString = "ws://$host:$port"
         Log.d("WS_CLIENT", "準備連線至: $urlString")
@@ -110,28 +111,38 @@ class TouchpadWebSocketClient(
 
         ws = client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
+                // 【修正 2】：安全防護，若回呼不屬於當前最新連線，直接忽略
+                if (webSocket != ws) return
                 Log.d("WS_CLIENT", "連線成功建立 (onOpen)")
-                ws = webSocket
                 onOpenSend(webSocket)
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
+                if (webSocket != ws) return
                 Log.d("WS_CLIENT", "收到伺服器訊息: $text")
                 handleIncoming(text)
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                if (webSocket != ws) return
                 Log.e("WS_CLIENT", "連線失敗 (onFailure): ${t.message}", t)
                 ws = null
                 _connState.value = ConnState.DISCONNECTED
-                if (isPairingMode) onPairFail("network_error")
+                if (isPairingMode) {
+                    isPairingMode = false // 清除配對標記，避免重複觸發失敗
+                    onPairFail("network_error")
+                }
             }
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                if (webSocket != ws) return
                 Log.d("WS_CLIENT", "連線關閉 (onClosed): 代碼=$code, 原因=$reason")
                 ws = null
                 _connState.value = ConnState.DISCONNECTED
-                if (isPairingMode) onPairFail("network_error")
+                if (isPairingMode) {
+                    isPairingMode = false
+                    onPairFail("network_error")
+                }
             }
         })
     }
