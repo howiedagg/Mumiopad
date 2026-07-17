@@ -1,9 +1,9 @@
 package com.example.vrtouchpad.network
 
-import android.os.Handler
-import android.os.Looper
 import android.util.Log
 import com.example.vrtouchpad.engine.TouchOutEvent
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -41,8 +41,15 @@ private class NoDelaySocketFactory : SocketFactory() {
         Socket(address, port, localAddress, localPort).applyNoDelay()
 }
 
+/**
+ * 狀態改用 StateFlow 廣播（[connState]），任何人都可以訂閱，
+ * 彼此不需要知道對方存在：ViewModel 訂閱來更新畫面，
+ * ConnectionOrchestrator 訂閱來判斷一次 dial 有沒有成功。
+ *
+ * 配對流程（pair_request / pair_success / pair_fail）只有 ViewModel 會用到，
+ * 沿用建構子 callback 即可，不需要一併搬去 StateFlow。
+ */
 class TouchpadWebSocketClient(
-    private val onStateChange: (ConnState) -> Unit,
     private val onPairSuccess: (token: String, pcName: String) -> Unit,
     private val onPairFail: (reason: String) -> Unit
 ) {
@@ -52,15 +59,16 @@ class TouchpadWebSocketClient(
         .socketFactory(NoDelaySocketFactory())
         .build()
 
-    private val mainHandler = Handler(Looper.getMainLooper())
+    private val _connState = MutableStateFlow(ConnState.DISCONNECTED)
+    val connState: StateFlow<ConnState> = _connState
+
     private var isPairingMode = false
 
-    // 移除 pairCode，改由 PC 端手動點擊「允許」進行一鍵配對
     fun connectForPairing(host: String, port: Int) {
         isPairingMode = true
-        onStateChange(ConnState.CONNECTING)
+        _connState.value = ConnState.CONNECTING
         open(host, port) { activeWs ->
-            mainHandler.post { onStateChange(ConnState.PAIRING) }
+            _connState.value = ConnState.PAIRING
 
             val deviceName = "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}"
             val json = JSONObject().apply {
@@ -74,7 +82,7 @@ class TouchpadWebSocketClient(
 
     fun connectWithToken(host: String, port: Int, token: String) {
         isPairingMode = false
-        onStateChange(ConnState.CONNECTING)
+        _connState.value = ConnState.CONNECTING
         open(host, port) { activeWs ->
             val json = JSONObject().apply {
                 put("type", "auth")
@@ -95,10 +103,8 @@ class TouchpadWebSocketClient(
             Request.Builder().url(urlString).build()
         } catch (e: Exception) {
             Log.e("WS_CLIENT", "建立 Request 失敗", e)
-            onStateChange(ConnState.DISCONNECTED)
-            if (isPairingMode) {
-                mainHandler.post { onPairFail("network_error") }
-            }
+            _connState.value = ConnState.DISCONNECTED
+            if (isPairingMode) onPairFail("network_error")
             return
         }
 
@@ -117,41 +123,35 @@ class TouchpadWebSocketClient(
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                 Log.e("WS_CLIENT", "連線失敗 (onFailure): ${t.message}", t)
                 ws = null
-                mainHandler.post { onStateChange(ConnState.DISCONNECTED) }
-                if (isPairingMode) {
-                    mainHandler.post { onPairFail("network_error") }
-                }
+                _connState.value = ConnState.DISCONNECTED
+                if (isPairingMode) onPairFail("network_error")
             }
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
                 Log.d("WS_CLIENT", "連線關閉 (onClosed): 代碼=$code, 原因=$reason")
                 ws = null
-                mainHandler.post { onStateChange(ConnState.DISCONNECTED) }
-                if (isPairingMode) {
-                    mainHandler.post { onPairFail("network_error") }
-                }
+                _connState.value = ConnState.DISCONNECTED
+                if (isPairingMode) onPairFail("network_error")
             }
         })
     }
 
     private fun handleIncoming(text: String) {
         val json = runCatching { JSONObject(text) }.getOrNull() ?: return
-        mainHandler.post {
-            when (json.optString("type")) {
-                "pair_success" -> {
-                    isPairingMode = false
-                    val token = json.optString("token")
-                    val pcName = json.optString("pc_name", "我的電腦")
-                    onPairSuccess(token, pcName)
-                }
-                "pair_fail" -> {
-                    isPairingMode = false
-                    onPairFail(json.optString("reason"))
-                }
-                "auth_ok" -> onStateChange(ConnState.CONNECTED)
-                "auth_fail" -> onStateChange(ConnState.AUTH_FAILED)
-                "pong" -> Unit
+        when (json.optString("type")) {
+            "pair_success" -> {
+                isPairingMode = false
+                val token = json.optString("token")
+                val pcName = json.optString("pc_name", "我的電腦")
+                onPairSuccess(token, pcName)
             }
+            "pair_fail" -> {
+                isPairingMode = false
+                onPairFail(json.optString("reason"))
+            }
+            "auth_ok" -> _connState.value = ConnState.CONNECTED
+            "auth_fail" -> _connState.value = ConnState.AUTH_FAILED
+            "pong" -> Unit
         }
     }
 
@@ -162,7 +162,7 @@ class TouchpadWebSocketClient(
             if (!success) {
                 Log.w("WS_CLIENT", "資料發送失敗，主動判定為連線中斷")
                 close()
-                mainHandler.post { onStateChange(ConnState.DISCONNECTED) }
+                _connState.value = ConnState.DISCONNECTED
             }
         } else {
             Log.w("WS_CLIENT", "嘗試發送資料，但 WebSocket 目前未連線")
@@ -180,7 +180,7 @@ class TouchpadWebSocketClient(
             is TouchOutEvent.Gesture ->
                 """{"type":"gesture","name":"${event.name}","direction":"${event.direction}"}"""
             is TouchOutEvent.Keypress ->
-                """{"type":"keypress","key":"${event.key}"}""" // 新增處理 Keypress
+                """{"type":"keypress","key":"${event.key}"}"""
         }
 
         val activeWs = ws
@@ -189,7 +189,7 @@ class TouchpadWebSocketClient(
             if (!success) {
                 Log.w("WS_CLIENT", "資料發送失敗，主動判定為連線中斷")
                 close()
-                mainHandler.post { onStateChange(ConnState.DISCONNECTED) }
+                _connState.value = ConnState.DISCONNECTED
             }
         } else {
             Log.w("WS_CLIENT", "嘗試發送資料，但 WebSocket 目前未連線")

@@ -14,7 +14,14 @@ private const val PREFS_NAME = "vrtouchpad_secure_tokens"
 private const val KEY_SERVER_LIST = "server_profiles_list"
 private const val KEY_SELECTED_UUID = "selected_server_uuid"
 
-data class SavedServer(val uuid: String, val name: String, val token: String)
+// 新增 lastKnownIp：上次成功連上這台電腦時的 IP，給 ConnectionOrchestrator 的熱直連捷徑用。
+// 預設 null，代表「還沒成功連過，或還沒有機會記錄」。
+data class SavedServer(
+    val uuid: String,
+    val name: String,
+    val token: String,
+    val lastKnownIp: String? = null,
+)
 
 data class DiscoveredServer(val uuid: String, val host: String, val port: Int, val name: String)
 
@@ -51,7 +58,10 @@ class PairingManager(private val context: Context) {
                     SavedServer(
                         uuid = obj.getString("uuid"),
                         name = obj.getString("name"),
-                        token = obj.getString("token")
+                        token = obj.getString("token"),
+                        lastKnownIp = if (obj.has("lastKnownIp") && !obj.isNull("lastKnownIp")) {
+                            obj.getString("lastKnownIp")
+                        } else null,
                     )
                 )
             }
@@ -59,17 +69,27 @@ class PairingManager(private val context: Context) {
         return list
     }
 
-    // 儲存或更新單一電腦憑證
+    // 儲存或更新單一電腦憑證（配對成功時呼叫，此時還沒有 lastKnownIp 也沒關係）
     fun saveServer(uuid: String, name: String, token: String) {
         val currentList = getSavedServers().toMutableList()
         val index = currentList.indexOfFirst { it.uuid == uuid }
-        val newProfile = SavedServer(uuid, name, token)
+        val newProfile = SavedServer(uuid, name, token, lastKnownIp = currentList.getOrNull(index)?.lastKnownIp)
         if (index != -1) {
             currentList[index] = newProfile
         } else {
             currentList.add(newProfile)
         }
         writeListToPrefs(currentList)
+    }
+
+    // 每次成功連線後呼叫，更新這台電腦「上次連上時的 IP」
+    fun updateLastKnownIp(uuid: String, ip: String) {
+        val currentList = getSavedServers().toMutableList()
+        val index = currentList.indexOfFirst { it.uuid == uuid }
+        if (index != -1) {
+            currentList[index] = currentList[index].copy(lastKnownIp = ip)
+            writeListToPrefs(currentList)
+        }
     }
 
     // 單點刪除特定電腦
@@ -87,7 +107,6 @@ class PairingManager(private val context: Context) {
         prefs.edit().putString(KEY_SELECTED_UUID, uuid).apply()
     }
 
-    // 修正警告：標記為 private，並修正 remove 參數過多的編譯錯誤
     private fun clearSelectedServerUuid() {
         prefs.edit().remove(KEY_SELECTED_UUID).apply()
     }
@@ -99,14 +118,14 @@ class PairingManager(private val context: Context) {
                 put("uuid", server.uuid)
                 put("name", server.name)
                 put("token", server.token)
+                put("lastKnownIp", server.lastKnownIp)
             }
             array.put(obj)
         }
         prefs.edit().putString(KEY_SERVER_LIST, array.toString()).apply()
     }
 
-    // --- mDNS 網路探索服務 ---
-    // 使用 Suppress 過濾新系統相容性帶來的過時警告
+    // --- mDNS 網路探索服務（跟原本完全一樣，沒有改動） ---
     @Suppress("DEPRECATION")
     fun discover(
         timeoutMs: Long = 4000,
@@ -135,7 +154,6 @@ class PairingManager(private val context: Context) {
             }
         }
 
-        // 修正警告：直接宣告並初始化，無需使用 lateinit 進行多餘賦值
         val discoveryListener = object : NsdManager.DiscoveryListener {
             override fun onDiscoveryStarted(serviceType: String?) {}
 
