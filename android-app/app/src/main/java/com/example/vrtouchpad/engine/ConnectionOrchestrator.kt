@@ -31,7 +31,7 @@ class ConnectionOrchestrator(
     private val getSavedServers: () -> List<SavedServer>,
     private val getLastKnownIp: (uuid: String) -> String?,
     private val updateLastKnownIp: (uuid: String, ip: String) -> Unit,
-    private val discover: (timeoutMs: Long, onFound: (DiscoveredServer) -> Unit, onFinished: () -> Unit) -> Unit,
+    private val discover: (timeoutMs: Long, onFound: (DiscoveredServer) -> Unit, onFinished: () -> Unit) -> (() -> Unit),
     private val dial: suspend (host: String, port: Int, token: String) -> Boolean,
     private val defaultPort: Int = 8765,
 ) {
@@ -141,11 +141,10 @@ class ConnectionOrchestrator(
         bssid?.let { networkProfileStore.setDefaultServerUuid(it, match.server.uuid) }
     }
 
-    /** 掃描一次，找到「已配對過」的電腦其中一台就立刻回傳，逾時仍沒找到就回傳 null。 */
     private suspend fun scanOnce(timeoutMs: Long, savedServers: List<SavedServer>): Matched? {
         return suspendCancellableCoroutine { cont ->
             var resolved = false
-            discover(
+            val cancelDiscover = discover(
                 timeoutMs,
                 { discovered ->
                     if (resolved) return@discover
@@ -164,6 +163,9 @@ class ConnectionOrchestrator(
                     }
                 }
             )
+            cont.invokeOnCancellation {
+                cancelDiscover()
+            }
         }
     }
 

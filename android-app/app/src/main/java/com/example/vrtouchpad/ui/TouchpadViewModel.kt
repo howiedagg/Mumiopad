@@ -274,7 +274,15 @@ class TouchpadViewModel(
         }
         pairingManager.deleteServer(uuid)
         networkProfileStore.removeAllReferencesTo(uuid)
-        refreshServerLists()
+        refreshServerLists() // 這會更新 _savedServers 的數值
+
+        if (pairingManager.getSavedServers().isEmpty()) {
+            _pairingNavState.value = PairingNavState.Hidden
+            startPairingScan()
+        } else {
+            orchestrator.start()
+            startPairingScan()
+        }
     }
 
     fun closeServerSelector() {

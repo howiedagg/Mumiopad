@@ -26,7 +26,8 @@ data class DiscoveredServer(val uuid: String, val host: String, val port: Int, v
 
 class PairingManager(private val context: Context) {
 
-    private val wifiManager = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+    private val wifiManager =
+        context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
     private var multicastLock: WifiManager.MulticastLock? = null
 
     private val prefs by lazy {
@@ -70,7 +71,8 @@ class PairingManager(private val context: Context) {
     fun saveServer(uuid: String, name: String, token: String) {
         val currentList = getSavedServers().toMutableList()
         val index = currentList.indexOfFirst { it.uuid == uuid }
-        val newProfile = SavedServer(uuid, name, token, lastKnownIp = currentList.getOrNull(index)?.lastKnownIp)
+        val newProfile =
+            SavedServer(uuid, name, token, lastKnownIp = currentList.getOrNull(index)?.lastKnownIp)
         if (index != -1) {
             currentList[index] = newProfile
         } else {
@@ -125,9 +127,10 @@ class PairingManager(private val context: Context) {
         timeoutMs: Long = 4000,
         onFound: (DiscoveredServer) -> Unit,
         onFinished: () -> Unit
-    ) {
+    ): () -> Unit { // 【修改】：回傳一個取消連線控制函式
         val nsdManager = context.getSystemService(Context.NSD_SERVICE) as NsdManager
         var finished = false
+        val handler = android.os.Handler(context.mainLooper)
 
         try {
             if (multicastLock == null) {
@@ -167,7 +170,10 @@ class PairingManager(private val context: Context) {
                         if (address.contains(":")) return
 
                         val pcNameBytes = info.attributes["pc_name"]
-                        val pcName = if (pcNameBytes != null) String(pcNameBytes, Charsets.UTF_8) else "未配對電腦"
+                        val pcName = if (pcNameBytes != null) String(
+                            pcNameBytes,
+                            Charsets.UTF_8
+                        ) else "未配對電腦"
 
                         onFound(DiscoveredServer(uuidPart, address, info.port, pcName))
                     }
@@ -183,18 +189,30 @@ class PairingManager(private val context: Context) {
                     onFinished()
                 }
             }
+
             override fun onStopDiscoveryFailed(serviceType: String?, errorCode: Int) {}
         }
 
-        nsdManager.discoverServices(SERVICE_TYPE, NsdManager.PROTOCOL_DNS_SD, discoveryListener)
-
-        android.os.Handler(context.mainLooper).postDelayed({
+        val timeoutRunnable = Runnable {
             if (!finished) {
                 finished = true
                 safeReleaseLock()
                 runCatching { nsdManager.stopServiceDiscovery(discoveryListener) }
                 onFinished()
             }
-        }, timeoutMs)
+        }
+
+        nsdManager.discoverServices(SERVICE_TYPE, NsdManager.PROTOCOL_DNS_SD, discoveryListener)
+        handler.postDelayed(timeoutRunnable, timeoutMs)
+
+        // 【新增】：回傳手動關閉掃描的閉包，供協程取消時使用
+        return {
+            if (!finished) {
+                finished = true
+                handler.removeCallbacks(timeoutRunnable)
+                safeReleaseLock()
+                runCatching { nsdManager.stopServiceDiscovery(discoveryListener) }
+            }
+        }
     }
 }
