@@ -196,8 +196,7 @@ fun AppRoot(viewModel: TouchpadViewModel) {
 
             if (connState != ConnState.CONNECTED &&
                 pairingNavState == PairingNavState.Hidden &&
-                unpairedDiscovered.isNotEmpty() &&
-                !showOnboarding
+                unpairedDiscovered.isNotEmpty()
             ) {
                 DiscoveredDeviceSnackbar(
                     deviceCount = unpairedDiscovered.size,

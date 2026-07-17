@@ -106,7 +106,22 @@ class TouchpadViewModel(
         getLastKnownIp = { uuid -> pairingManager.getSavedServers().find { it.uuid == uuid }?.lastKnownIp },
         updateLastKnownIp = { uuid, ip -> pairingManager.updateLastKnownIp(uuid, ip) },
         discover = { timeoutMs, onFound, onFinished ->
-            pairingManager.discover(timeoutMs = timeoutMs, onFound = onFound, onFinished = onFinished)
+            // 【整合點】：在協調器發起掃描時，攔截新發現的電腦資訊
+            pairingManager.discover(
+                timeoutMs = timeoutMs,
+                onFound = { server ->
+                    val savedList = pairingManager.getSavedServers()
+                    if (!savedList.any { it.uuid == server.uuid }) {
+                        val currentList = _unpairedDiscovered.value.toMutableList()
+                        if (!currentList.any { it.uuid == server.uuid }) {
+                            currentList.add(server)
+                            _unpairedDiscovered.value = currentList
+                        }
+                    }
+                    onFound(server)
+                },
+                onFinished = onFinished
+            )
         },
         dial = ::dialAdapter,
     )
@@ -120,7 +135,10 @@ class TouchpadViewModel(
                 _connState.value = when (phase) {
                     is ConnectionOrchestrator.Phase.Idle -> ConnState.DISCONNECTED
                     is ConnectionOrchestrator.Phase.Connecting -> ConnState.CONNECTING
-                    is ConnectionOrchestrator.Phase.Connected -> ConnState.CONNECTED
+                    is ConnectionOrchestrator.Phase.Connected -> {
+                        _unpairedDiscovered.value = emptyList()
+                        ConnState.CONNECTED
+                    }
                 }
                 if (phase is ConnectionOrchestrator.Phase.Connected) {
                     wifiPerformanceManager.acquire()
@@ -247,9 +265,11 @@ class TouchpadViewModel(
     fun closeServerSelector() {
         pendingPairServer = null
         _pairingNavState.value = PairingNavState.Hidden
+        orchestrator.start()
     }
 
     fun openServerSelector() {
+        orchestrator.stop()
         _pairingError.value = null
         pendingPairServer = null
         refreshServerLists()
