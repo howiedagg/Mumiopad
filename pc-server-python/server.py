@@ -1,5 +1,5 @@
 """
-VR Touchpad - PC 端接收伺服器（輕量重構版）
+VR Touchpad - PC 端接收伺服器（同目錄乾淨版）
 """
 
 import asyncio
@@ -28,29 +28,19 @@ HOST = "0.0.0.0"
 PORT = 8765
 import os
 
-# 系統標準儲存路徑（同 LINE、Chrome 等主流軟體做法）
-# 保持使用者執行目錄乾淨，同時能永久記住配對
+IS_WINDOWS = sys.platform == "win32"
+
+# 取得設定檔路徑
 def get_secure_config_path() -> Path:
-    if sys.platform == "win32":
-        # 儲存在 Windows 內建的應用程式設定資料夾中
-        appdata = os.environ.get("APPDATA")
-        if appdata:
-            base_dir = Path(appdata) / "Mumiopad"
-        else:
-            base_dir = Path.home() / ".mumiopad"
-    else:
-        base_dir = Path.home() / ".config" / "mumiopad"
-        
-    # 自動建立隱藏資料夾
-    base_dir.mkdir(parents=True, exist_ok=True)
-    return base_dir / "server_config.json"
+    # 直接定位在 server.py 檔案所在的同一個資料夾下
+    # 徹底避開任何虛擬化重導向
+    return Path(__file__).resolve().parent / "server_config.json"
 
 CONFIG_FILE = get_secure_config_path()
 
 mouse = MouseController()
 keyboard = KeyboardController()
 
-IS_WINDOWS = sys.platform == "win32"
 REG_RUN_PATH = r"Software\Microsoft\Windows\CurrentVersion\Run"
 REG_APP_NAME = "VRTouchpadServer"
 
@@ -374,7 +364,13 @@ def apply_text(value: str):
         threading.Thread(target=restore_task, daemon=True).start()
 
 def apply_keypress(key_name: str):
-    if key_name == "BROWSER_BACK":
+    if key_name == "VOLUME_UP":
+        keyboard.press(Key.media_volume_up)
+        keyboard.release(Key.media_volume_up)
+    elif key_name == "VOLUME_DOWN":
+        keyboard.press(Key.media_volume_down)
+        keyboard.release(Key.media_volume_down)
+    elif key_name == "BROWSER_BACK":
         with keyboard.pressed(Key.alt):
             keyboard.press(Key.left)
             keyboard.release(Key.left)
@@ -566,13 +562,13 @@ def update_tray_menu():
                 )
             )
         
-        # 【優化調整】：如果有名單，在最下方增加分隔線與「清除所有」選項
+        # 動態選單調整
         device_submenu_items.append(pystray.Menu.SEPARATOR)
         device_submenu_items.append(
             pystray.MenuItem("清除所有信任裝置", lambda item: clear_all_pairings())
         )
 
-    # 主選單現在變得更加乾淨俐落
+    # 主選單
     menu_items = [
         pystray.MenuItem(f"電腦名稱: {pc_name}", action=None, enabled=False),
         pystray.MenuItem("已信任裝置", pystray.Menu(*device_submenu_items)),
@@ -607,6 +603,9 @@ async def shutdown_cleanly():
     await asyncio.gather(*tasks, return_exceptions=True)
     if loop:
         loop.stop()
+    
+    # 物理性強制終止，防止線程殘留
+    os._exit(0)
 
 def run_tray_icon():
     global tray_icon
@@ -614,7 +613,8 @@ def run_tray_icon():
     tray_icon = pystray.Icon("VRTouchpad", icon_img, "VR Touchpad Server")
     update_tray_menu()
     
-    tray_thread = threading.Thread(target=tray_icon.run)
+    # 使用 daemon=True 確保主執行緒退出時能自動釋放
+    tray_thread = threading.Thread(target=tray_icon.run, daemon=True)
     tray_thread.start()
 
 async def main():
