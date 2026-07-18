@@ -32,6 +32,7 @@ class GestureEngine(
 ) {
     private val slopPx = 8f * density
     private val stillPx = 10f * density
+    private val dragStartSlopPx = 1.5f * density // 優化：極小的啟動門檻，僅用於過濾物理雜訊，實現零延遲拖曳
     private val scrollActivationSlopPx = 32f * density
     private val swipeThresholdPx = 48f * density
 
@@ -82,19 +83,9 @@ class GestureEngine(
     private var threeFingerStartY = 0f
     private var threeFingerSwiped = false
 
+    // 兩指捲動仍保留 catchupSmoother，因為捲動本身需要平滑過渡
     private val catchupSmoother = ScrollCatchupSmoother(scope) { delta ->
         accumulatedScrollDy += delta
-    }
-
-    // 【新增】：單指長按拖曳跨過 stillPx(~32px)死區時，這段死區期間手指
-    // 已經走過、但原本會被直接丟棄的距離，比照兩指捲動已有的死區補償做法，
-    // 重用同一個通用平滑元件把它補回去，避免「手指已經在動、游標卻完全
-    // 沒反應」的明顯延遲感。x、y 分開兩個實例，各自累加進對應的 accumulator。
-    private val dragCatchupSmootherX = ScrollCatchupSmoother(scope) { delta ->
-        accumulatedDragDx += delta
-    }
-    private val dragCatchupSmootherY = ScrollCatchupSmoother(scope) { delta ->
-        accumulatedDragDy += delta
     }
 
     fun onDown(id: Long, x: Float, y: Float) {
@@ -117,13 +108,7 @@ class GestureEngine(
                 longPressJob?.cancel()
 
                 if (dragging) {
-                    // 【新增】：拖曳死區補償是個短暫的批次注入(~20ms 內跑完)，
-                    // 正常情況下這裡不會遇到還在跑的狀況，但保險起見比照
-                    // onUp 的處理方式一併取消，避免它在拖曳已經結束送出
-                    // left-up 之後，還殘留著把值繼續加進 accumulatedDragDx/Dy。
-                    dragCatchupSmootherX.cancel()
-                    dragCatchupSmootherY.cancel()
-
+                    // 已移除非同步的 dragCatchupSmootherX/Y 清理呼叫
                     if (accumulatedDragDx != 0f || accumulatedDragDy != 0f) {
                         emit(TouchOutEvent.Move(accumulatedDragDx, accumulatedDragDy))
                         accumulatedDragDx = 0f
@@ -147,9 +132,6 @@ class GestureEngine(
                 }
 
                 accumulatedScrollDy = 0f
-                // 【設計說明】：rawHapticAccumulator 在這裡歸零是安全的——它現在只是
-                // 「這次手勢裡手指移動了多少物理距離」的計數器，跟 PC 端無關，
-                // 每次新的兩指手勢從零開始重新累積是正確行為，不會有基準點錯位的問題。
                 rawHapticAccumulator = 0f
                 lastEmitTime = System.currentTimeMillis()
             }
@@ -207,19 +189,20 @@ class GestureEngine(
                 }
             }
 
-            Mode.PREDRAG_WAIT -> if (id == firstFingerId && dist(p) >= stillPx) {
+            Mode.PREDRAG_WAIT -> if (id == firstFingerId && dist(p) >= dragStartSlopPx) {
                 dragging = true
                 mode = Mode.DRAG
                 emit(TouchOutEvent.Click("left", "down"))
-                accumulatedDragDx = 0f
-                accumulatedDragDy = 0f
 
-                // 【新增】：p.startX/Y 是長按判定成立那一刻的手指位置(死區起點)，
-                // p.x/p.y 是跨過死區門檻當下的位置，兩者差值就是死區期間手指
-                // 實際走過、但還沒送出去的距離。用 catchup smoother 平滑分批
-                // 補回去，而不是像原本那樣直接丟掉、讓游標卡住不動。
-                dragCatchupSmootherX.start(p.x - p.startX)
-                dragCatchupSmootherY.start(p.y - p.startY)
+                // 優化：直接同步將這段極微小的啟動距離加入累積量，並立即送出，免除任何非同步延遲
+                accumulatedDragDx = p.x - p.startX
+                accumulatedDragDy = p.y - p.startY
+                if (accumulatedDragDx != 0f || accumulatedDragDy != 0f) {
+                    emit(TouchOutEvent.Move(accumulatedDragDx, accumulatedDragDy))
+                    accumulatedDragDx = 0f
+                    accumulatedDragDy = 0f
+                }
+                lastEmitTime = now
             }
 
             Mode.DRAG -> if (id == firstFingerId) {
@@ -255,12 +238,6 @@ class GestureEngine(
                         if (abs(deltaY) > abs(deltaX)) {
                             mode = Mode.SCROLL_VERTICAL
                             catchupSmoother.start(deltaY)
-                            // 【修正】：死區期間(TWO_FINGER_WAIT)走過的 deltaY，
-                            // catchupSmoother 已經把它補償進畫面捲動，但震動累加器
-                            // 在死區期間完全沒被餵過任何值(triggerRawHaptics 只在
-                            // SCROLL_VERTICAL 的 onMove 裡呼叫)。這裡補上這一次，
-                            // 讓死區走過的物理距離也算進震動判斷，才不會發生
-                            // 「第一次移動畫面有動、但震動累加器從 0 重新算」的情況。
                             triggerRawHaptics(deltaY)
                             lastScrollY = currentAvgY
                         } else {
@@ -279,8 +256,6 @@ class GestureEngine(
                     val rawDeltaY = currentAvgY - lastScrollY
                     accumulatedScrollDy += rawDeltaY
 
-                    // 【重新設計】：震動用尚未經過 dampening／節流的原始物理位移即時判斷，
-                    // 在 onMove 當下就觸發，不等 10ms 批次送出，跟畫面實際捲動速度脫鉤。
                     triggerRawHaptics(rawDeltaY)
 
                     if (now - lastEmitTime >= emitIntervalMs) {
@@ -364,11 +339,7 @@ class GestureEngine(
             }
 
             Mode.DRAG -> if (id == firstFingerId) {
-                // 【新增】：跟兩指捲動的 catchupSmoother.cancel() 做法一致，
-                // 放開手指時把死區補償的批次注入中止，不補發剩餘量。
-                dragCatchupSmootherX.cancel()
-                dragCatchupSmootherY.cancel()
-
+                // 已移除了 dragCatchupSmoother.cancel() 呼叫
                 if (accumulatedDragDx != 0f || accumulatedDragDy != 0f) {
                     emit(TouchOutEvent.Move(accumulatedDragDx, accumulatedDragDy))
                 }
@@ -395,7 +366,6 @@ class GestureEngine(
                     val limitedScrollDy = applyScrollDampening(accumulatedScrollDy)
                     emit(TouchOutEvent.Scroll(limitedScrollDy))
                 }
-                // 震動已在 onMove 當下用原始物理位移即時處理過，這裡不用再補觸發。
             }
 
             Mode.SWIPE_HORIZONTAL -> { }
@@ -448,8 +418,7 @@ class GestureEngine(
     fun reset() {
         longPressJob?.cancel()
         catchupSmoother.cancel()
-        dragCatchupSmootherX.cancel() // 【新增】
-        dragCatchupSmootherY.cancel() // 【新增】
+        // 已移除了 dragCatchupSmoother 的重設呼叫
         pointers.clear()
         mode = Mode.IDLE
         dragging = false
