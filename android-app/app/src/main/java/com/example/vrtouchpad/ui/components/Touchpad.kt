@@ -27,6 +27,7 @@ fun Touchpad(
     scrollSpeed: Float,
     reverseScroll: Boolean,
     scope: CoroutineScope,
+    isKeyboardActive: Boolean, // 【新增】：外部傳入的鍵盤當前狀態
     onOutEvent: (TouchOutEvent) -> Unit,
     onToggleKeyboard: () -> Unit,
 ) {
@@ -36,6 +37,7 @@ fun Touchpad(
     val currentMouseSpeed by rememberUpdatedState(mouseSpeed)
     val currentScrollSpeed by rememberUpdatedState(scrollSpeed)
     val currentReverseScroll by rememberUpdatedState(reverseScroll)
+    val currentIsKeyboardActive by rememberUpdatedState(isKeyboardActive) // 捕捉最新鍵盤展開狀態
 
     val currentOnOutEvent by rememberUpdatedState(onOutEvent)
     val currentOnToggleKeyboard by rememberUpdatedState(onToggleKeyboard)
@@ -90,7 +92,8 @@ fun Touchpad(
                 }
                 view.performHapticFeedback(constant)
             },
-            onToggleKeyboard = { currentOnToggleKeyboard() }
+            onToggleKeyboard = { currentOnToggleKeyboard() },
+            isKeyboardActive = { currentIsKeyboardActive } // 【新增】：將最新狀態傳入引擎
         )
     }
 

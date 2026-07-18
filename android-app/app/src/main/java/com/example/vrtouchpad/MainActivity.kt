@@ -186,7 +186,7 @@ fun AppRoot(viewModel: TouchpadViewModel) {
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize()) {
 
-            // 只有在非初次配對引導期（已綁定歷史裝置）時，才顯示狀態欄膠囊
+            // 只有在防初次配對引導期（已綁定歷史裝置）時，才顯示狀態欄膠囊
             if (!showOnboarding) {
                 StatusBar(
                     connState = connState,
@@ -237,6 +237,7 @@ fun AppRoot(viewModel: TouchpadViewModel) {
                     scrollSpeed = scrollSpeed,
                     reverseScroll = reverseScroll,
                     scope = scope,
+                    isKeyboardActive = isKeyboardActive, // 【傳遞進 Touchpad 元件】
                     onOutEvent = { viewModel.wsClient.sendEvent(it) },
                     onToggleKeyboard = { viewModel.toggleKeyboard() }
                 )

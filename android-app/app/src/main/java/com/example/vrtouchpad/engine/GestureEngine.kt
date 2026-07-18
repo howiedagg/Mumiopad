@@ -32,7 +32,8 @@ class GestureEngine(
     private val longPressMs: Long = 200,
     private val emit: (TouchOutEvent) -> Unit,
     private val onLocalFeedback: (LocalFeedbackType) -> Unit = {},
-    private val onToggleKeyboard: () -> Unit = {}
+    private val onToggleKeyboard: () -> Unit = {},
+    private val isKeyboardActive: () -> Boolean = { false } // 【新增】：判斷鍵盤狀態的回呼
 ) {
     private val slopPx = 8f * density
     private val stillPx = 10f * density
@@ -85,7 +86,7 @@ class GestureEngine(
     private var accumulatedDragDx = 0f
     private var accumulatedDragDy = 0f
     private var accumulatedScrollDy = 0f
-    private var accumulatedZoomSteps = 0 // 【優化】：儲存準備傳送給 PC 的精準整數縮放步數
+    private var accumulatedZoomSteps = 0 // 儲存準備傳送給 PC 的精準整數縮放步數
 
     private var startTwoFingerDist = 0f // 兩指初始距離
     private var lastTwoFingerDist = 0f  // 兩指前一次距離
@@ -323,7 +324,7 @@ class GestureEngine(
                     val currentDist = distBetween(p1, p2)
                     lastTwoFingerDist = currentDist
 
-                    // 【優化】：絕對格線震動對齊。消除原地微顫產生的多餘震動，並將產生的「整數步數」與震動進行 100% 同步
+                    // 絕對格線震動對齊。消除原地微顫產生的多餘震動，並將產生的「整數步數」與震動進行 100% 同步
                     val hapticDiff = currentDist - lastHapticTwoFingerDist
                     if (abs(hapticDiff) >= zoomHapticDistancePx) {
                         val ticksCount = (abs(hapticDiff) / zoomHapticDistancePx).toInt()
@@ -343,7 +344,7 @@ class GestureEngine(
 
                     if (now - lastEmitTime >= emitIntervalMs) {
                         if (accumulatedZoomSteps != 0) {
-                            // 【優化】：直接傳送精準的整數步數給 PC 端，PC 端直接執行，無小數殘留，解決對齊盲區
+                            // 直接傳送精準的整數步數給 PC 端，PC 端直接執行，無小數殘留，解決對齊盲區
                             emit(TouchOutEvent.Zoom(accumulatedZoomSteps.toFloat()))
                             accumulatedZoomSteps = 0
                         }
@@ -383,10 +384,20 @@ class GestureEngine(
 
                         if (deltaY >= swipeThresholdPx) {
                             threeFingerSwiped = true
-                            emit(TouchOutEvent.Gesture("desktop", "down"))
+                            // 【整合優化】：鍵盤已叫出時，三指向下改為「收合鍵盤」；鍵盤未叫出時，維持原本三指向下（顯示桌面）
+                            if (isKeyboardActive()) {
+                                onLocalFeedback(LocalFeedbackType.TICK)
+                                onToggleKeyboard() // 執行收合
+                            } else {
+                                emit(TouchOutEvent.Gesture("desktop", "down"))
+                            }
                         } else if (deltaY <= -swipeThresholdPx) {
                             threeFingerSwiped = true
-                            emit(TouchOutEvent.Gesture("desktop", "up"))
+                            // 【整合優化】：三指上滑。只有在鍵盤未開啟時，才發送「開啟鍵盤」要求，防止重複觸發
+                            if (!isKeyboardActive()) {
+                                onLocalFeedback(LocalFeedbackType.TICK)
+                                onToggleKeyboard() // 執行展開
+                            }
                         }
                     }
                 }
@@ -467,9 +478,10 @@ class GestureEngine(
             }
 
             Mode.FOUR_FINGER -> {
+                // 四指點擊（tap）改成「滑鼠中鍵點擊」，不再切換鍵盤
                 if (dist(p) < slopPx * 3f) {
                     onLocalFeedback(LocalFeedbackType.TICK)
-                    onToggleKeyboard()
+                    emit(TouchOutEvent.Click("middle", "click")) // 發送中鍵點擊事件給 PC
                 }
                 mode = Mode.IDLE
             }

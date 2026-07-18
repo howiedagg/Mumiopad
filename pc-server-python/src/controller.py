@@ -13,12 +13,13 @@ MOUSEEVENTF_LEFTDOWN = 0x0002
 MOUSEEVENTF_LEFTUP = 0x0004
 MOUSEEVENTF_RIGHTDOWN = 0x0008
 MOUSEEVENTF_RIGHTUP = 0x0010
+MOUSEEVENTF_MIDDLEDOWN = 0x0020  # 【新增】：Windows 中鍵壓下標記
+MOUSEEVENTF_MIDDLEUP = 0x0040    # 【新增】：Windows 中鍵釋放標記
 
 mouse = MouseController()
 keyboard = KeyboardController()
 
 accumulated_scroll_y = 0.0
-# 已徹底移除全域變數 accumulated_zoom_delta
 
 SPECIAL_KEYS = {
     "ESC": Key.esc,
@@ -48,7 +49,6 @@ class SmoothMouseEngine:
         self.stiffness = 0.65
         self.running = True
 
-        # 【修正】：只換掉「該不該歸零」的判斷依據，其他都不動。
         self.last_input_time = time.monotonic()
         self.idle_stop_threshold_s = 0.05
 
@@ -119,6 +119,9 @@ def apply_click(button: str, action: str):
         if button == "left":
             down_flag = MOUSEEVENTF_LEFTDOWN
             up_flag = MOUSEEVENTF_LEFTUP
+        elif button == "middle": # 【新增】：Windows 中鍵映射
+            down_flag = MOUSEEVENTF_MIDDLEDOWN
+            up_flag = MOUSEEVENTF_MIDDLEUP
         else:
             down_flag = MOUSEEVENTF_RIGHTDOWN
             up_flag = MOUSEEVENTF_RIGHTUP
@@ -131,7 +134,14 @@ def apply_click(button: str, action: str):
         elif action == "up":
             ctypes.windll.user32.mouse_event(up_flag, 0, 0, 0, 0)
     else:
-        btn = Button.left if button == "left" else Button.right
+        # 非 Windows 系統（如 macOS/Linux）的 pynput 映射
+        if button == "left":
+            btn = Button.left
+        elif button == "middle": # 【新增】
+            btn = Button.middle
+        else:
+            btn = Button.right
+
         if action == "click":
             mouse.click(btn, 1)
         elif action == "down":
