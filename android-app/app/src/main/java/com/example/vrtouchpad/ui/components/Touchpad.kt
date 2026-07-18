@@ -74,7 +74,7 @@ fun Touchpad(
                     LocalFeedbackType.TICK -> {
                         // 【恢復】：採用您覺得力度剛好的上一版震動定義，回復扎實的力道
                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                            HapticFeedbackConstants.CONFIRM
+                            HapticFeedbackConstants.SEGMENT_FREQUENT_TICK
                         } else {
                             HapticFeedbackConstants.VIRTUAL_KEY
                         }
