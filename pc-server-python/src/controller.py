@@ -45,6 +45,14 @@ class SmoothMouseEngine:
         self.stiffness = 0.65
         self.running = True
 
+        # 【修正】：只換掉「該不該歸零」的判斷依據，其他都不動。
+        # 原本用瞬時速度大小(abs(vx) < 0.05)去猜使用者是否停手，
+        # 慢速滑動時常常猜錯，強制把還在正常衰減中的殘留速度打斷歸零，
+        # 造成頓一下的延遲感。改用「距離上次真的收到資料過了多久」判斷，
+        # 才是真正該問的問題。
+        self.last_input_time = time.monotonic()
+        self.idle_stop_threshold_s = 0.05
+
         if IS_WINDOWS:
             try:
                 ctypes.windll.winmm.timeBeginPeriod(1)
@@ -58,6 +66,7 @@ class SmoothMouseEngine:
         with self.lock:
             self.buffer_dx += dx
             self.buffer_dy += dy
+            self.last_input_time = time.monotonic()
 
     def _loop(self):
         sleep_time = 0.008
@@ -67,12 +76,18 @@ class SmoothMouseEngine:
                 dy = self.buffer_dy
                 self.buffer_dx = 0.0
                 self.buffer_dy = 0.0
-            
-            self.vx = self.vx * (1.0 - self.stiffness) + dx * self.stiffness
-            self.vy = self.vy * (1.0 - self.stiffness) + dy * self.stiffness
+                idle_duration = time.monotonic() - self.last_input_time
 
-            if abs(self.vx) < 0.05: self.vx = 0.0
-            if abs(self.vy) < 0.05: self.vy = 0.0
+            if idle_duration >= self.idle_stop_threshold_s:
+                # 真的停手一段時間了，直接歸零，不留殘餘速度繼續飄
+                self.vx = 0.0
+                self.vy = 0.0
+            else:
+                # 【還原】：不管這個 tick 有沒有新資料，都要照常執行指數平滑——
+                # 這是原本程式碼本來的行為，拿掉它是上一版改壞的地方。
+                # dx=0 時，這行本來就會讓 vx 自然衰減，不需要額外用 if 去跳過它。
+                self.vx = self.vx * (1.0 - self.stiffness) + dx * self.stiffness
+                self.vy = self.vy * (1.0 - self.stiffness) + dy * self.stiffness
 
             if self.vx != 0 or self.vy != 0:
                 total_x = self.vx + self.remainder_x

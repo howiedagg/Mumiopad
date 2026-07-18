@@ -94,6 +94,17 @@ class GestureEngine(
         accumulatedScrollDy += delta
     }
 
+    // 【新增】：單指長按拖曳跨過 stillPx(~32px)死區時，這段死區期間手指
+    // 已經走過、但原本會被直接丟棄的距離，比照兩指捲動已有的死區補償做法，
+    // 重用同一個通用平滑元件把它補回去，避免「手指已經在動、游標卻完全
+    // 沒反應」的明顯延遲感。x、y 分開兩個實例，各自累加進對應的 accumulator。
+    private val dragCatchupSmootherX = ScrollCatchupSmoother(scope) { delta ->
+        accumulatedDragDx += delta
+    }
+    private val dragCatchupSmootherY = ScrollCatchupSmoother(scope) { delta ->
+        accumulatedDragDy += delta
+    }
+
     fun onDown(id: Long, x: Float, y: Float) {
         pointers[id] = Pointer(x, y, x, y)
 
@@ -114,6 +125,13 @@ class GestureEngine(
                 longPressJob?.cancel()
 
                 if (dragging) {
+                    // 【新增】：拖曳死區補償是個短暫的批次注入(~20ms 內跑完)，
+                    // 正常情況下這裡不會遇到還在跑的狀況，但保險起見比照
+                    // onUp 的處理方式一併取消，避免它在拖曳已經結束送出
+                    // left-up 之後，還殘留著把值繼續加進 accumulatedDragDx/Dy。
+                    dragCatchupSmootherX.cancel()
+                    dragCatchupSmootherY.cancel()
+
                     if (accumulatedDragDx != 0f || accumulatedDragDy != 0f) {
                         emit(TouchOutEvent.Move(accumulatedDragDx, accumulatedDragDy))
                         accumulatedDragDx = 0f
@@ -203,6 +221,13 @@ class GestureEngine(
                 emit(TouchOutEvent.Click("left", "down"))
                 accumulatedDragDx = 0f
                 accumulatedDragDy = 0f
+
+                // 【新增】：p.startX/Y 是長按判定成立那一刻的手指位置(死區起點)，
+                // p.x/p.y 是跨過死區門檻當下的位置，兩者差值就是死區期間手指
+                // 實際走過、但還沒送出去的距離。用 catchup smoother 平滑分批
+                // 補回去，而不是像原本那樣直接丟掉、讓游標卡住不動。
+                dragCatchupSmootherX.start(p.x - p.startX)
+                dragCatchupSmootherY.start(p.y - p.startY)
             }
 
             Mode.DRAG -> if (id == firstFingerId) {
@@ -347,6 +372,11 @@ class GestureEngine(
             }
 
             Mode.DRAG -> if (id == firstFingerId) {
+                // 【新增】：跟兩指捲動的 catchupSmoother.cancel() 做法一致，
+                // 放開手指時把死區補償的批次注入中止，不補發剩餘量。
+                dragCatchupSmootherX.cancel()
+                dragCatchupSmootherY.cancel()
+
                 if (accumulatedDragDx != 0f || accumulatedDragDy != 0f) {
                     emit(TouchOutEvent.Move(accumulatedDragDx, accumulatedDragDy))
                 }
@@ -426,6 +456,8 @@ class GestureEngine(
     fun reset() {
         longPressJob?.cancel()
         catchupSmoother.cancel()
+        dragCatchupSmootherX.cancel() // 【新增】
+        dragCatchupSmootherY.cancel() // 【新增】
         pointers.clear()
         mode = Mode.IDLE
         dragging = false
