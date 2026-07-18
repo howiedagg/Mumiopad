@@ -24,11 +24,11 @@ enum class LocalFeedbackType {
 
 class GestureEngine(
     private val scope: CoroutineScope,
-    density: Float,
+    private val density: Float,
     private val longPressMs: Long = 200,
     private val emit: (TouchOutEvent) -> Unit,
     private val onLocalFeedback: (LocalFeedbackType) -> Unit = {},
-    private val onToggleKeyboard: () -> Unit = {} // 【新增】：四指觸發的本地鍵盤開關回呼
+    private val onToggleKeyboard: () -> Unit = {}
 ) {
     private val slopPx = 8f * density
     private val stillPx = 10f * density
@@ -39,9 +39,22 @@ class GestureEngine(
     private val multiTapWindowMs = 120L
     private val tapTimeoutMs = 280L
 
+    // 觸覺反饋與防暴衝相關參數
+    private val scrollDampeningLimitPx = 35f * density
+
+    // 【重新設計】：震動改成只看「兩指的原始物理位移」，完全不經過
+    // accumulatedScrollDy／applyScrollDampening／emitIntervalMs 節流／scrollSpeed 倍率
+    // 這條送出鏈路。真實滑鼠滾輪的觸感是機械結構直接對應手指轉動的物理角度，
+    // 跟畫面實際捲動了多少格是兩件事；這裡刻意仿照這個原則：手指移動固定物理距離
+    // 就震一次，在 onMove 當下立刻觸發，不等批次送出，也不受 dampening 影響而變慢或失真。
+    // 代價是：震動格數不再保證跟 PC 端捲動格數逐格對應（快速滑動時 PC 端因為
+    // dampening 少捲一點），但這才是像真滾輪的體感——手指動多少震多少，恆定不變。
+    private val hapticNotchDistancePx = 24f * density // 可調：越小震動越密集
+    private var rawHapticAccumulator = 0f
+
     private enum class Mode {
         IDLE, MOVE, PREDRAG_WAIT, DRAG, TWO_FINGER_WAIT,
-        SCROLL_VERTICAL, SWIPE_HORIZONTAL, THREE_FINGER, FOUR_FINGER // 【新增】：FOUR_FINGER
+        SCROLL_VERTICAL, SWIPE_HORIZONTAL, THREE_FINGER, FOUR_FINGER
     }
 
     private data class Pointer(
@@ -118,12 +131,26 @@ class GestureEngine(
                 mode = Mode.TWO_FINGER_WAIT
                 transitionedFromMultiTouch = true
 
+                pointers.values.forEach {
+                    it.startX = it.x
+                    it.startY = it.y
+                }
+
                 accumulatedScrollDy = 0f
+                // 【設計說明】：rawHapticAccumulator 在這裡歸零是安全的——它現在只是
+                // 「這次手勢裡手指移動了多少物理距離」的計數器，跟 PC 端無關，
+                // 每次新的兩指手勢從零開始重新累積是正確行為，不會有基準點錯位的問題。
+                rawHapticAccumulator = 0f
                 lastEmitTime = System.currentTimeMillis()
             }
             3 -> {
                 mode = Mode.THREE_FINGER
                 transitionedFromMultiTouch = true
+
+                pointers.values.forEach {
+                    it.startX = it.x
+                    it.startY = it.y
+                }
 
                 val p1 = pointers.values.elementAtOrNull(0)
                 val p2 = pointers.values.elementAtOrNull(1)
@@ -134,9 +161,12 @@ class GestureEngine(
                 threeFingerSwiped = false
             }
             4 -> {
-                // 【新增】：四根手指放上時，直接進入四指模式
                 mode = Mode.FOUR_FINGER
                 transitionedFromMultiTouch = true
+                pointers.values.forEach {
+                    it.startX = it.x
+                    it.startY = it.y
+                }
             }
         }
     }
@@ -208,6 +238,13 @@ class GestureEngine(
                         if (abs(deltaY) > abs(deltaX)) {
                             mode = Mode.SCROLL_VERTICAL
                             catchupSmoother.start(deltaY)
+                            // 【修正】：死區期間(TWO_FINGER_WAIT)走過的 deltaY，
+                            // catchupSmoother 已經把它補償進畫面捲動，但震動累加器
+                            // 在死區期間完全沒被餵過任何值(triggerRawHaptics 只在
+                            // SCROLL_VERTICAL 的 onMove 裡呼叫)。這裡補上這一次，
+                            // 讓死區走過的物理距離也算進震動判斷，才不會發生
+                            // 「第一次移動畫面有動、但震動累加器從 0 重新算」的情況。
+                            triggerRawHaptics(deltaY)
                             lastScrollY = currentAvgY
                         } else {
                             mode = Mode.SWIPE_HORIZONTAL
@@ -222,11 +259,17 @@ class GestureEngine(
                 val p2 = pointers.values.elementAtOrNull(1)
                 if (p1 != null && p2 != null) {
                     val currentAvgY = (p1.y + p2.y) / 2
-                    accumulatedScrollDy += (currentAvgY - lastScrollY)
+                    val rawDeltaY = currentAvgY - lastScrollY
+                    accumulatedScrollDy += rawDeltaY
+
+                    // 【重新設計】：震動用尚未經過 dampening／節流的原始物理位移即時判斷，
+                    // 在 onMove 當下就觸發，不等 10ms 批次送出，跟畫面實際捲動速度脫鉤。
+                    triggerRawHaptics(rawDeltaY)
 
                     if (now - lastEmitTime >= emitIntervalMs) {
                         if (abs(accumulatedScrollDy) > 0.1f) {
-                            emit(TouchOutEvent.Scroll(accumulatedScrollDy))
+                            val limitedScrollDy = applyScrollDampening(accumulatedScrollDy)
+                            emit(TouchOutEvent.Scroll(limitedScrollDy))
                             accumulatedScrollDy = 0f
                         }
                         lastEmitTime = now
@@ -327,8 +370,10 @@ class GestureEngine(
             Mode.SCROLL_VERTICAL -> {
                 catchupSmoother.cancel()
                 if (abs(accumulatedScrollDy) > 0.1f) {
-                    emit(TouchOutEvent.Scroll(accumulatedScrollDy))
+                    val limitedScrollDy = applyScrollDampening(accumulatedScrollDy)
+                    emit(TouchOutEvent.Scroll(limitedScrollDy))
                 }
+                // 震動已在 onMove 當下用原始物理位移即時處理過，這裡不用再補觸發。
             }
 
             Mode.SWIPE_HORIZONTAL -> { }
@@ -340,11 +385,10 @@ class GestureEngine(
                 mode = Mode.IDLE
             }
 
-            // 【新增】：四指放開時，判斷是否在容錯範圍內（給3倍容忍度，因為四指擠壓容易位移）
             Mode.FOUR_FINGER -> {
                 if (dist(p) < slopPx * 3f) {
-                    onLocalFeedback(LocalFeedbackType.TICK) // 震動優先：在 View 失去焦點前確保成功觸發
-                    onToggleKeyboard() // 隨後開啟鍵盤
+                    onLocalFeedback(LocalFeedbackType.TICK)
+                    onToggleKeyboard()
                 }
                 mode = Mode.IDLE
             }
@@ -392,6 +436,7 @@ class GestureEngine(
         accumulatedDragDx = 0f
         accumulatedDragDy = 0f
         accumulatedScrollDy = 0f
+        rawHapticAccumulator = 0f
         horizontalSwipeTriggered = false
         threeFingerStartY = 0f
         threeFingerSwiped = false
@@ -412,5 +457,31 @@ class GestureEngine(
         val dx = p.x - p.startX
         val dy = p.y - p.startY
         return sqrt(dx * dx + dy * dy)
+    }
+
+    private fun applyScrollDampening(dy: Float): Float {
+        val absDy = abs(dy)
+        if (absDy <= scrollDampeningLimitPx) return dy
+
+        val extra = absDy - scrollDampeningLimitPx
+        val dampenedAbs = scrollDampeningLimitPx + (extra * 0.25f)
+        return if (dy > 0) dampenedAbs else -dampenedAbs
+    }
+
+    /**
+     * 純粹依「兩指的原始物理位移距離」判斷震動，完全不理會 dampening、scrollSpeed、
+     * 或 emitIntervalMs 節流——這幾個都是「畫面/PC 端要收到多少」的考量，
+     * 跟「手指移動了多少物理距離該震一下」是兩件事，混在一起判斷正是先前
+     * 「有時滑到沒振、有時沒滑到卻振」的根源。
+     *
+     * 效果類似真實滑鼠滾輪：手指（滾輪）轉動固定物理角度就是一格觸感，
+     * 不會因為系統當下的加速度曲線或延遲節流而改變震動的節奏。
+     */
+    private fun triggerRawHaptics(rawDeltaY: Float) {
+        rawHapticAccumulator += abs(rawDeltaY)
+        while (rawHapticAccumulator >= hapticNotchDistancePx) {
+            onLocalFeedback(LocalFeedbackType.TICK)
+            rawHapticAccumulator -= hapticNotchDistancePx
+        }
     }
 }

@@ -16,7 +16,7 @@ import kotlinx.coroutines.launch
 class ScrollCatchupSmoother(
     private val scope: CoroutineScope,
     private val tickMs: Long = 10L,
-    private val ticks: Int = 4,
+    private val ticks: Int = 2,
     private val emitDelta: (Float) -> Unit,
 ) {
     private var job: Job? = null

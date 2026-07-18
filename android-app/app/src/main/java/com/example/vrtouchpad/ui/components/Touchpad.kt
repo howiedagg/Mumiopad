@@ -4,7 +4,6 @@ import android.os.Build
 import android.view.HapticFeedbackConstants
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -27,7 +26,7 @@ fun Touchpad(
     reverseScroll: Boolean,
     scope: CoroutineScope,
     onOutEvent: (TouchOutEvent) -> Unit,
-    onToggleKeyboard: () -> Unit, // 【新增】：外部傳入的鍵盤開關控制
+    onToggleKeyboard: () -> Unit,
 ) {
     val density = LocalDensity.current.density
     val view = LocalView.current
@@ -73,6 +72,7 @@ fun Touchpad(
                         }
                     }
                     LocalFeedbackType.TICK -> {
+                        // 【恢復】：採用您覺得力度剛好的上一版震動定義，回復扎實的力道
                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                             HapticFeedbackConstants.CONFIRM
                         } else {
@@ -82,7 +82,7 @@ fun Touchpad(
                 }
                 view.performHapticFeedback(constant)
             },
-            onToggleKeyboard = { currentOnToggleKeyboard() } // 【綁定】：呼叫 ViewModel 的控制
+            onToggleKeyboard = { currentOnToggleKeyboard() }
         )
     }
 
