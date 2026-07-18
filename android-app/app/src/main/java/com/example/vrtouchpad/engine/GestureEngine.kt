@@ -41,14 +41,6 @@ class GestureEngine(
 
     // 觸覺反饋與防暴衝相關參數
     private val scrollDampeningLimitPx = 35f * density
-
-    // 【重新設計】：震動改成只看「兩指的原始物理位移」，完全不經過
-    // accumulatedScrollDy／applyScrollDampening／emitIntervalMs 節流／scrollSpeed 倍率
-    // 這條送出鏈路。真實滑鼠滾輪的觸感是機械結構直接對應手指轉動的物理角度，
-    // 跟畫面實際捲動了多少格是兩件事；這裡刻意仿照這個原則：手指移動固定物理距離
-    // 就震一次，在 onMove 當下立刻觸發，不等批次送出，也不受 dampening 影響而變慢或失真。
-    // 代價是：震動格數不再保證跟 PC 端捲動格數逐格對應（快速滑動時 PC 端因為
-    // dampening 少捲一點），但這才是像真滾輪的體感——手指動多少震多少，恆定不變。
     private val hapticNotchDistancePx = 24f * density // 可調：越小震動越密集
     private var rawHapticAccumulator = 0f
 
@@ -499,16 +491,6 @@ class GestureEngine(
         val dampenedAbs = scrollDampeningLimitPx + (extra * 0.25f)
         return if (dy > 0) dampenedAbs else -dampenedAbs
     }
-
-    /**
-     * 純粹依「兩指的原始物理位移距離」判斷震動，完全不理會 dampening、scrollSpeed、
-     * 或 emitIntervalMs 節流——這幾個都是「畫面/PC 端要收到多少」的考量，
-     * 跟「手指移動了多少物理距離該震一下」是兩件事，混在一起判斷正是先前
-     * 「有時滑到沒振、有時沒滑到卻振」的根源。
-     *
-     * 效果類似真實滑鼠滾輪：手指（滾輪）轉動固定物理角度就是一格觸感，
-     * 不會因為系統當下的加速度曲線或延遲節流而改變震動的節奏。
-     */
     private fun triggerRawHaptics(rawDeltaY: Float) {
         rawHapticAccumulator += abs(rawDeltaY)
         while (rawHapticAccumulator >= hapticNotchDistancePx) {

@@ -27,7 +27,7 @@ fun StatusBar(
     connState: ConnState,
     isKeyboardOpen: Boolean,
     onSettingsClick: () -> Unit,
-    onStatusClick: () -> Unit, // 點擊狀態列膠囊觸發下拉選單
+    onStatusClick: () -> Unit,
     onToggleKeyboard: () -> Unit
 ) {
     Row(

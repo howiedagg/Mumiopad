@@ -27,13 +27,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 
-/**
- * 發現新電腦時的輕量提示。展開顯示數秒後自動收合成小圓點，
- * 不會像原本的固定高度 Row 一樣長期擠壓觸控板可用區域；
- * 不論展開或收合狀態，點擊都會開啟裝置清單畫面，
- * 讓使用者從完整清單中選擇要配對哪一台（解決原本 firstOrNull()
- * 只顯示一台、其餘被吃掉的問題）。
- */
 @Composable
 fun DiscoveredDeviceSnackbar(
     deviceCount: Int,

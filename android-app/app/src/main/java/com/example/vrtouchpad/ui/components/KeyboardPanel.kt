@@ -31,10 +31,7 @@ fun InvisibleKeyboardInput(
     val focusRequester = remember { FocusRequester() }
     val view = LocalView.current
 
-    // 追蹤鍵盤在本次開啟週期中，是否至少有成功顯示過
     var hasKeyboardBeenShown by remember { mutableStateOf(false) }
-
-    // 使用 Android 底層 OnGlobalLayoutListener 監聽物理可見螢幕高度變化
     DisposableEffect(view) {
         val listener = ViewTreeObserver.OnGlobalLayoutListener {
             val rect = Rect()
@@ -61,8 +58,6 @@ fun InvisibleKeyboardInput(
             focusRequester.requestFocus()
         }
     }
-
-    // 【修改】：將預設緩衝區極大化至 1000 個空白字元，提供充足的退格空間並徹底隱形
     val anchorText = remember { " ".repeat(1000) }
 
     var textFieldValue by remember {
@@ -81,23 +76,17 @@ fun InvisibleKeyboardInput(
                 val newText = newValue.text
 
                 when {
-                    // 1. 退格刪除判定
                     newText.length < oldText.length -> {
                         val diff = oldText.length - newText.length
                         repeat(diff) {
                             onSendKey("BACKSPACE")
                         }
-
-                        // 【修改】：按住退格時不再頻繁重置。只有當 1000 字元被刪到剩下不到 100 字元時，
-                        // 才強制重置。這能完美避免輸入法在連續刪除時因 Buffer 變更而中斷。
                         if (newText.length < 100) {
                             textFieldValue = TextFieldValue(text = anchorText, selection = TextRange(anchorText.length))
                         } else {
                             textFieldValue = newValue
                         }
                     }
-
-                    // 2. 字元送出判定：組字完畢
                     newValue.composition == null -> {
                         if (newText.length > oldText.length) {
                             val committed = newText.substring(oldText.length)
@@ -107,11 +96,9 @@ fun InvisibleKeyboardInput(
                                 onSendText(committed)
                             }
                         }
-                        // 【修改】：每當有新字元成功送出時，才順便在背景悄悄補滿 1000 字元緩衝區
                         textFieldValue = TextFieldValue(text = anchorText, selection = TextRange(anchorText.length))
                     }
 
-                    // 3. 組字中
                     else -> {
                         textFieldValue = newValue
                     }
