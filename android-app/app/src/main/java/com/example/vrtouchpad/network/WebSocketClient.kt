@@ -188,6 +188,8 @@ class TouchpadWebSocketClient(
                 """{"type":"click","button":"${event.button}","action":"${event.action}"}"""
             is TouchOutEvent.Scroll ->
                 """{"type":"scroll","dy":${event.dy}}"""
+            is TouchOutEvent.Zoom ->
+                """{"type":"zoom","delta":${event.delta}}"""
             is TouchOutEvent.Gesture ->
                 """{"type":"gesture","name":"${event.name}","direction":"${event.direction}"}"""
             is TouchOutEvent.Keypress ->

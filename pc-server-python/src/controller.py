@@ -4,7 +4,7 @@ import time
 import ctypes
 import threading
 from pynput.mouse import Controller as MouseController, Button
-from pynput.keyboard import Controller as KeyboardController, Key
+from pynput.keyboard import Controller as KeyboardController, Key, KeyCode
 
 IS_WINDOWS = sys.platform == "win32"
 
@@ -16,6 +16,9 @@ MOUSEEVENTF_RIGHTUP = 0x0010
 
 mouse = MouseController()
 keyboard = KeyboardController()
+
+accumulated_scroll_y = 0.0
+# 已徹底移除全域變數 accumulated_zoom_delta
 
 SPECIAL_KEYS = {
     "ESC": Key.esc,
@@ -46,10 +49,6 @@ class SmoothMouseEngine:
         self.running = True
 
         # 【修正】：只換掉「該不該歸零」的判斷依據，其他都不動。
-        # 原本用瞬時速度大小(abs(vx) < 0.05)去猜使用者是否停手，
-        # 慢速滑動時常常猜錯，強制把還在正常衰減中的殘留速度打斷歸零，
-        # 造成頓一下的延遲感。改用「距離上次真的收到資料過了多久」判斷，
-        # 才是真正該問的問題。
         self.last_input_time = time.monotonic()
         self.idle_stop_threshold_s = 0.05
 
@@ -79,13 +78,9 @@ class SmoothMouseEngine:
                 idle_duration = time.monotonic() - self.last_input_time
 
             if idle_duration >= self.idle_stop_threshold_s:
-                # 真的停手一段時間了，直接歸零，不留殘餘速度繼續飄
                 self.vx = 0.0
                 self.vy = 0.0
             else:
-                # 【還原】：不管這個 tick 有沒有新資料，都要照常執行指數平滑——
-                # 這是原本程式碼本來的行為，拿掉它是上一版改壞的地方。
-                # dx=0 時，這行本來就會讓 vx 自然衰減，不需要額外用 if 去跳過它。
                 self.vx = self.vx * (1.0 - self.stiffness) + dx * self.stiffness
                 self.vy = self.vy * (1.0 - self.stiffness) + dy * self.stiffness
 
@@ -115,7 +110,6 @@ class SmoothMouseEngine:
                 pass
 
 smooth_mouse = SmoothMouseEngine()
-accumulated_scroll_y = 0.0
 
 def apply_move(dx: float, dy: float):
     smooth_mouse.add_movement(dx, dy)
@@ -153,6 +147,32 @@ def apply_scroll(dy: float):
     if steps != 0:
         accumulated_scroll_y -= steps
         mouse.scroll(0, steps)
+
+VK_OEM_PLUS = 187   # 鍵盤上的「=+」鍵
+VK_OEM_MINUS = 189  # 鍵盤上的「-_」鍵
+
+def apply_zoom(delta: float):
+    steps = int(delta)
+    if steps == 0:
+        return
+        
+    try:
+        # 根據正負號決定放大或縮小
+        if steps > 0:
+            target_key = KeyCode.from_vk(VK_OEM_PLUS)
+            loop_count = steps
+        else:
+            target_key = KeyCode.from_vk(VK_OEM_MINUS)
+            loop_count = abs(steps)
+            
+        # 模擬按住 Windows 鍵 (Key.cmd)，並點擊對應次數的 + 或 -
+        with keyboard.pressed(Key.cmd):
+            for _ in range(loop_count):
+                keyboard.press(target_key)
+                keyboard.release(target_key)
+                time.sleep(0.01) # 微小延遲，確保 Windows 系統來得及響應
+    except Exception as e:
+        print(f"[MAGNIFIER ERROR] 模擬螢幕放大鏡失敗: {e}")
 
 def apply_text(value: str):
     if not IS_WINDOWS:

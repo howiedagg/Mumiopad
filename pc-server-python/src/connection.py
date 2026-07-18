@@ -6,7 +6,7 @@ import uuid
 import ctypes
 from websockets.server import serve
 from src.config import load_config, add_device_token, remove_device_token, IS_WINDOWS
-from src.controller import apply_move, apply_click, apply_scroll, apply_text, apply_keypress, apply_gesture
+from src.controller import apply_move, apply_click, apply_scroll, apply_zoom, apply_text, apply_keypress, apply_gesture
 
 HOST = "0.0.0.0"
 PORT = 8765
@@ -115,6 +115,8 @@ class ConnectionManager:
             apply_click(msg.get("button", "left"), msg.get("action", "click"))
         elif t == "scroll":
             apply_scroll(msg.get("dy", 0))
+        elif t == "zoom":
+            apply_zoom(msg.get("delta", 0))
         elif t == "text":
             apply_text(msg.get("value", ""))
         elif t == "keypress":

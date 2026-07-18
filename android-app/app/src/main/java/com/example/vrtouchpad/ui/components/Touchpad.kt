@@ -1,3 +1,5 @@
+// D:/howie/Documents/vr-touchpad-app/vr-touchpad-app/android-app/app/src/main/java/com/example/vrtouchpad/ui/components/Touchpad.kt
+
 package com.example.vrtouchpad.ui.components
 
 import android.os.Build
@@ -76,6 +78,13 @@ fun Touchpad(
                             HapticFeedbackConstants.SEGMENT_FREQUENT_TICK
                         } else {
                             HapticFeedbackConstants.VIRTUAL_KEY
+                        }
+                    }
+                    LocalFeedbackType.ZOOM_TICK -> {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                            HapticFeedbackConstants.SEGMENT_TICK // 高階單次刻度，用於縮放微調
+                        } else {
+                            HapticFeedbackConstants.KEYBOARD_PRESS
                         }
                     }
                 }

@@ -1,3 +1,5 @@
+// D:/howie/Documents/vr-touchpad-app/vr-touchpad-app/android-app/app/src/main/java/com/example/vrtouchpad/engine/GestureEngine.kt
+
 package com.example.vrtouchpad.engine
 
 import kotlinx.coroutines.CoroutineScope
@@ -12,6 +14,7 @@ sealed class TouchOutEvent {
     data class Move(val dx: Float, val dy: Float) : TouchOutEvent()
     data class Click(val button: String, val action: String) : TouchOutEvent()
     data class Scroll(val dy: Float) : TouchOutEvent()
+    data class Zoom(val delta: Float) : TouchOutEvent() // 縮放事件（此處 delta 將傳送精準的整數步數）
     data class Gesture(val name: String, val direction: String) : TouchOutEvent()
     data class Keypress(val key: String) : TouchOutEvent()
 }
@@ -19,7 +22,8 @@ sealed class TouchOutEvent {
 enum class LocalFeedbackType {
     PRESS_LOCK,
     RELEASE_LOCK,
-    TICK
+    TICK,
+    ZOOM_TICK // 縮放專用刻度震動
 }
 
 class GestureEngine(
@@ -32,8 +36,10 @@ class GestureEngine(
 ) {
     private val slopPx = 8f * density
     private val stillPx = 10f * density
-    private val dragStartSlopPx = 1.5f * density // 優化：極小的啟動門檻，僅用於過濾物理雜訊，實現零延遲拖曳
+    private val dragStartSlopPx = 1.5f * density
     private val scrollActivationSlopPx = 32f * density
+    private val zoomActivationSlopPx = 25f * density // 捏合啟動門檻
+    private val zoomHapticDistancePx = 30f * density // 縮放專用刻度間隔（30dp）
     private val swipeThresholdPx = 48f * density
 
     private val emitIntervalMs = 10L
@@ -45,9 +51,11 @@ class GestureEngine(
     private val hapticNotchDistancePx = 24f * density // 可調：越小震動越密集
     private var rawHapticAccumulator = 0f
 
+    private var lastHapticTwoFingerDist = 0f // 紀錄上一次觸發震動時的「絕對距離」
+
     private enum class Mode {
         IDLE, MOVE, PREDRAG_WAIT, DRAG, TWO_FINGER_WAIT,
-        SCROLL_VERTICAL, SWIPE_HORIZONTAL, THREE_FINGER, FOUR_FINGER
+        SCROLL_VERTICAL, SWIPE_HORIZONTAL, ZOOM, THREE_FINGER, FOUR_FINGER
     }
 
     private data class Pointer(
@@ -77,13 +85,16 @@ class GestureEngine(
     private var accumulatedDragDx = 0f
     private var accumulatedDragDy = 0f
     private var accumulatedScrollDy = 0f
+    private var accumulatedZoomSteps = 0 // 【優化】：儲存準備傳送給 PC 的精準整數縮放步數
+
+    private var startTwoFingerDist = 0f // 兩指初始距離
+    private var lastTwoFingerDist = 0f  // 兩指前一次距離
 
     private var horizontalSwipeTriggered = false
 
     private var threeFingerStartY = 0f
     private var threeFingerSwiped = false
 
-    // 兩指捲動仍保留 catchupSmoother，因為捲動本身需要平滑過渡
     private val catchupSmoother = ScrollCatchupSmoother(scope) { delta ->
         accumulatedScrollDy += delta
     }
@@ -108,7 +119,6 @@ class GestureEngine(
                 longPressJob?.cancel()
 
                 if (dragging) {
-                    // 已移除非同步的 dragCatchupSmootherX/Y 清理呼叫
                     if (accumulatedDragDx != 0f || accumulatedDragDy != 0f) {
                         emit(TouchOutEvent.Move(accumulatedDragDx, accumulatedDragDy))
                         accumulatedDragDx = 0f
@@ -131,7 +141,16 @@ class GestureEngine(
                     it.startY = it.y
                 }
 
+                val p1 = pointers.values.elementAtOrNull(0)
+                val p2 = pointers.values.elementAtOrNull(1)
+                if (p1 != null && p2 != null) {
+                    startTwoFingerDist = distBetween(p1, p2)
+                    lastTwoFingerDist = startTwoFingerDist
+                    lastHapticTwoFingerDist = startTwoFingerDist
+                }
+
                 accumulatedScrollDy = 0f
+                accumulatedZoomSteps = 0
                 rawHapticAccumulator = 0f
                 lastEmitTime = System.currentTimeMillis()
             }
@@ -194,7 +213,6 @@ class GestureEngine(
                 mode = Mode.DRAG
                 emit(TouchOutEvent.Click("left", "down"))
 
-                // 優化：直接同步將這段極微小的啟動距離加入累積量，並立即送出，免除任何非同步延遲
                 accumulatedDragDx = p.x - p.startX
                 accumulatedDragDy = p.y - p.startY
                 if (accumulatedDragDx != 0f || accumulatedDragDy != 0f) {
@@ -233,7 +251,35 @@ class GestureEngine(
                     val deltaX = currentAvgX - startAvgX
                     val deltaY = currentAvgY - startAvgY
 
-                    if (max(abs(deltaX), abs(deltaY)) >= scrollActivationSlopPx) {
+                    val currentDist = distBetween(p1, p2)
+                    val deltaDist = currentDist - startTwoFingerDist
+
+                    // 各自手指相較於觸碰起點的移動向量
+                    val v1x = p1.x - p1.startX
+                    val v1y = p1.y - p1.startY
+                    val v2x = p2.x - p2.startX
+                    val v2y = p2.y - p2.startY
+
+                    // 計算兩向量的內積 (Dot Product)
+                    val dot = (v1x * v2x) + (v1y * v2y)
+
+                    // 同向判定。若內積大於 0 且位移大於基本死區，代表手指是在往同方向滑動（捲動/瀏覽）
+                    val isMovingInSameDirection = dot > 0 &&
+                            ((v1x * v1x + v1y * v1y) > slopPx * slopPx || (v2x * v2x + v2y * v2y) > slopPx * slopPx)
+
+                    // 安全鎖：計算兩隻手指是否都有移動超過基礎死區
+                    val bothMoved = (v1x * v1x + v1y * v1y) > slopPx * slopPx &&
+                            (v2x * v2x + v2y * v2y) > slopPx * slopPx
+
+                    // 狀態鎖定競爭機制 (Race & Lock)
+                    // 只有在「確認非同方向滑動」且「兩指都有明確移動」的前提下，才允許觸發縮放，完美相容單指固定、單向滑動滾動
+                    if (abs(deltaDist) >= zoomActivationSlopPx && !isMovingInSameDirection && bothMoved) {
+                        rightClickCandidate = false
+                        mode = Mode.ZOOM
+                        lastTwoFingerDist = currentDist
+                        lastHapticTwoFingerDist = currentDist // 初始對齊
+                        triggerZoomHaptics(deltaDist) // 觸發初始縮放刻度震動
+                    } else if (max(abs(deltaX), abs(deltaY)) >= scrollActivationSlopPx) {
                         rightClickCandidate = false
                         if (abs(deltaY) > abs(deltaX)) {
                             mode = Mode.SCROLL_VERTICAL
@@ -267,6 +313,42 @@ class GestureEngine(
                         lastEmitTime = now
                     }
                     lastScrollY = currentAvgY
+                }
+            }
+
+            Mode.ZOOM -> { // 縮放移動階段
+                val p1 = pointers.values.elementAtOrNull(0)
+                val p2 = pointers.values.elementAtOrNull(1)
+                if (p1 != null && p2 != null) {
+                    val currentDist = distBetween(p1, p2)
+                    lastTwoFingerDist = currentDist
+
+                    // 【優化】：絕對格線震動對齊。消除原地微顫產生的多餘震動，並將產生的「整數步數」與震動進行 100% 同步
+                    val hapticDiff = currentDist - lastHapticTwoFingerDist
+                    if (abs(hapticDiff) >= zoomHapticDistancePx) {
+                        val ticksCount = (abs(hapticDiff) / zoomHapticDistancePx).toInt()
+                        val sign = if (hapticDiff > 0) 1 else -1
+
+                        // 1. 手動震動
+                        repeat(ticksCount) {
+                            onLocalFeedback(LocalFeedbackType.ZOOM_TICK)
+                        }
+
+                        // 2. 累積精準的整數步數（放大為 +1，縮小為 -1）
+                        accumulatedZoomSteps += sign * ticksCount
+
+                        // 3. 更新對齊格線
+                        lastHapticTwoFingerDist += sign * ticksCount * zoomHapticDistancePx
+                    }
+
+                    if (now - lastEmitTime >= emitIntervalMs) {
+                        if (accumulatedZoomSteps != 0) {
+                            // 【優化】：直接傳送精準的整數步數給 PC 端，PC 端直接執行，無小數殘留，解決對齊盲區
+                            emit(TouchOutEvent.Zoom(accumulatedZoomSteps.toFloat()))
+                            accumulatedZoomSteps = 0
+                        }
+                        lastEmitTime = now
+                    }
                 }
             }
 
@@ -339,7 +421,6 @@ class GestureEngine(
             }
 
             Mode.DRAG -> if (id == firstFingerId) {
-                // 已移除了 dragCatchupSmoother.cancel() 呼叫
                 if (accumulatedDragDx != 0f || accumulatedDragDy != 0f) {
                     emit(TouchOutEvent.Move(accumulatedDragDx, accumulatedDragDy))
                 }
@@ -366,6 +447,14 @@ class GestureEngine(
                     val limitedScrollDy = applyScrollDampening(accumulatedScrollDy)
                     emit(TouchOutEvent.Scroll(limitedScrollDy))
                 }
+            }
+
+            Mode.ZOOM -> { // 釋放手指時送出剩餘縮放步數
+                if (accumulatedZoomSteps != 0) {
+                    emit(TouchOutEvent.Zoom(accumulatedZoomSteps.toFloat()))
+                    accumulatedZoomSteps = 0
+                }
+                mode = Mode.IDLE
             }
 
             Mode.SWIPE_HORIZONTAL -> { }
@@ -418,7 +507,6 @@ class GestureEngine(
     fun reset() {
         longPressJob?.cancel()
         catchupSmoother.cancel()
-        // 已移除了 dragCatchupSmoother 的重設呼叫
         pointers.clear()
         mode = Mode.IDLE
         dragging = false
@@ -429,6 +517,10 @@ class GestureEngine(
         accumulatedDragDx = 0f
         accumulatedDragDy = 0f
         accumulatedScrollDy = 0f
+        accumulatedZoomSteps = 0
+        startTwoFingerDist = 0f
+        lastTwoFingerDist = 0f
+        lastHapticTwoFingerDist = 0f
         rawHapticAccumulator = 0f
         horizontalSwipeTriggered = false
         threeFingerStartY = 0f
@@ -452,6 +544,12 @@ class GestureEngine(
         return sqrt(dx * dx + dy * dy)
     }
 
+    private fun distBetween(p1: Pointer, p2: Pointer): Float { // 計算雙指物理間距
+        val dx = p1.x - p2.x
+        val dy = p1.y - p2.y
+        return sqrt(dx * dx + dy * dy)
+    }
+
     private fun applyScrollDampening(dy: Float): Float {
         val absDy = abs(dy)
         if (absDy <= scrollDampeningLimitPx) return dy
@@ -465,6 +563,22 @@ class GestureEngine(
         while (rawHapticAccumulator >= hapticNotchDistancePx) {
             onLocalFeedback(LocalFeedbackType.TICK)
             rawHapticAccumulator -= hapticNotchDistancePx
+        }
+    }
+
+    private fun triggerZoomHaptics(rawDeltaDist: Float) { // 格線絕對對齊震動演算法
+        val currentDist = lastTwoFingerDist
+        val hapticDiff = currentDist - lastHapticTwoFingerDist
+        if (abs(hapticDiff) >= zoomHapticDistancePx) {
+            val ticksCount = (abs(hapticDiff) / zoomHapticDistancePx).toInt()
+            val sign = if (hapticDiff > 0) 1 else -1
+
+            repeat(ticksCount) {
+                onLocalFeedback(LocalFeedbackType.ZOOM_TICK)
+            }
+
+            accumulatedZoomSteps += sign * ticksCount
+            lastHapticTwoFingerDist += sign * ticksCount * zoomHapticDistancePx
         }
     }
 }
