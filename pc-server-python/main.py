@@ -1,4 +1,5 @@
 # pc-server-python/main.py
+
 import asyncio
 import os
 import sys
@@ -10,6 +11,7 @@ from src.tray import TrayIconManager
 
 loop = None
 tray_manager = None
+connection_manager = None 
 
 async def shutdown_cleanly():
     global loop
@@ -29,13 +31,22 @@ def on_exit_clicked():
     if loop:
         asyncio.run_coroutine_threadsafe(shutdown_cleanly(), loop)
 
+def on_unpair_clicked(token):
+    global connection_manager
+    if connection_manager:
+        connection_manager.close_connection_by_token(token)
+
 def run_tray():
     global tray_manager
-    tray_manager = TrayIconManager(on_exit_callback=on_exit_clicked)
-    tray_manager.run()
+    tray_manager = TrayIconManager(
+        on_exit_callback=on_exit_clicked,
+        on_unpair_callback=on_unpair_clicked
+    )
+    tray_thread = threading.Thread(target=tray_manager.run)
+    tray_thread.start()
 
 async def main():
-    global loop
+    global loop, connection_manager 
     loop = asyncio.get_running_loop()
     
     config = load_config()
@@ -46,9 +57,10 @@ async def main():
     await discovery.register()
     print("mDNS 區域網路探索廣播已啟動")
 
-    # 建立連線管理器並註冊托盤選單更新回呼
+    # 建立連線管理器
     connection_manager = ConnectionManager(
         server_uuid=server_uuid,
+        loop=loop,  # 【修正】：直接將運行中的事件循環 (loop) 物件注入
         on_update_menu_callback=lambda: tray_manager.update_menu() if tray_manager else None
     )
 

@@ -63,6 +63,13 @@ class TouchpadViewModel(
     private val _reverseScroll = MutableStateFlow(settingsStore.reverseScroll)
     val reverseScroll: StateFlow<Boolean> = _reverseScroll
 
+    private val _onlineSavedUuids = MutableStateFlow<Set<String>>(emptySet())
+    val onlineSavedUuids: StateFlow<Set<String>> = _onlineSavedUuids
+
+    // 【新增】：使用者手動中斷標記，用來控制自動連線的行為
+    private val _userWantsOffline = MutableStateFlow(false)
+    val userWantsOffline: StateFlow<Boolean> = _userWantsOffline
+
     private var isAppActive = true
     private var pendingPairServer: DiscoveredServer? = null
     private var lastDialToken: String? = null
@@ -107,7 +114,9 @@ class TouchpadViewModel(
                 timeoutMs = timeoutMs,
                 onFound = { server ->
                     val savedList = pairingManager.getSavedServers()
-                    if (!savedList.any { it.uuid == server.uuid }) {
+                    if (savedList.any { it.uuid == server.uuid }) {
+                        _onlineSavedUuids.value = _onlineSavedUuids.value + server.uuid
+                    } else {
                         val currentList = _unpairedDiscovered.value.toMutableList()
                         if (!currentList.any { it.uuid == server.uuid }) {
                             currentList.add(server)
@@ -122,21 +131,15 @@ class TouchpadViewModel(
         dial = ::dialAdapter,
     )
 
-    // 【重構】：合併連線狀態。將協調器尋找過程與 Socket 的實際狀態進行綁定，保證連線資訊即時且同步
     val connState: StateFlow<ConnState> = combine(
         orchestrator.phase,
         wsClient.connState
     ) { orthoPhase, wsState ->
         when {
-            // 1. 若實體 Socket 處於已連線、驗證失敗或配對中，以實體狀態為最高優先級
             wsState == ConnState.CONNECTED -> ConnState.CONNECTED
             wsState == ConnState.AUTH_FAILED -> ConnState.AUTH_FAILED
             wsState == ConnState.PAIRING -> ConnState.PAIRING
-
-            // 2. 若協調器或實體 Socket 正處於連線嘗試，則向 UI 回報 Connecting（黃燈）
             orthoPhase is ConnectionOrchestrator.Phase.Connecting || wsState == ConnState.CONNECTING -> ConnState.CONNECTING
-
-            // 3. 其餘狀況為斷開
             else -> ConnState.DISCONNECTED
         }
     }.stateIn(
@@ -144,6 +147,31 @@ class TouchpadViewModel(
         started = SharingStarted.WhileSubscribed(5000),
         initialValue = ConnState.DISCONNECTED
     )
+
+    val connectedServerUuid: StateFlow<String?> = combine(
+        connState,
+        _savedServers
+    ) { state, _ ->
+        if (state == ConnState.CONNECTED) pairingManager.getSelectedServerUuid() else null
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+
+    val connectedServerName: StateFlow<String?> = combine(
+        orchestrator.phase,
+        wsClient.connState,
+        _savedServers
+    ) { orthoPhase, wsState, savedList ->
+        if (wsState == ConnState.CONNECTED) {
+            when (orthoPhase) {
+                is ConnectionOrchestrator.Phase.Connected -> orthoPhase.serverName
+                else -> {
+                    val activeUuid = pairingManager.getSelectedServerUuid()
+                    savedList.find { it.uuid == activeUuid }?.name ?: "已連線"
+                }
+            }
+        } else {
+            null
+        }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
     init {
         refreshServerLists()
@@ -154,11 +182,10 @@ class TouchpadViewModel(
             orchestrator.start()
         }
 
-        // 訂閱合併連線狀態，用來控管 WiFi 低延遲效能鎖與清理 UI 暫存
         viewModelScope.launch {
             connState.collect { state ->
                 if (state == ConnState.CONNECTED) {
-                    _unpairedDiscovered.value = emptyList() // 連上後清空新發現暫存
+                    _unpairedDiscovered.value = emptyList()
                     wifiPerformanceManager.acquire()
                 } else {
                     wifiPerformanceManager.release()
@@ -166,7 +193,6 @@ class TouchpadViewModel(
             }
         }
 
-        // 訂閱實體連線與重連機制
         viewModelScope.launch {
             wsClient.connState.collect { state ->
                 if (state == ConnState.AUTH_FAILED) {
@@ -180,8 +206,8 @@ class TouchpadViewModel(
                         refreshServerLists()
                     }
                 } else if (state == ConnState.DISCONNECTED) {
-                    // 【優化】：斷線自動重連機制。若在前景、已有信任電腦，且非選單/手動配對狀態下，重新喚醒協調器
-                    if (isAppActive && pairingManager.getSavedServers().isNotEmpty() && _pairingNavState.value == PairingNavState.Hidden) {
+                    // 【優化】：只有在「使用者並未手動斷線」時，非預期斷線才觸發自動重連
+                    if (isAppActive && !_userWantsOffline.value && pairingManager.getSavedServers().isNotEmpty() && _pairingNavState.value == PairingNavState.Hidden) {
                         Log.d("RECONNECT", "Socket 斷開且處於前景，重新喚醒自動連線協調器")
                         orchestrator.start()
                     }
@@ -211,7 +237,9 @@ class TouchpadViewModel(
     fun updateAppActive(active: Boolean) {
         isAppActive = active
         if (active) {
-            if (connState.value != ConnState.CONNECTED && pairingManager.getSavedServers().isNotEmpty()) {
+            // 【優化】：回到前景或重開 App 代表全新連線意圖，重置標記並連線
+            _userWantsOffline.value = false
+            if (pairingManager.getSavedServers().isNotEmpty()) {
                 orchestrator.start()
             }
         } else {
@@ -246,6 +274,7 @@ class TouchpadViewModel(
 
     fun triggerPairing(server: DiscoveredServer) {
         orchestrator.stop()
+        _userWantsOffline.value = false // 新發起配對重設連線意圖
         pendingPairServer = server
         _pairingError.value = null
         _pairingNavState.value = PairingNavState.PairingWaiting(server)
@@ -267,10 +296,9 @@ class TouchpadViewModel(
         }
     }
 
-    // 【修正】：手動切換至指定電腦。
-    // 優先調用 manualConnect 直連該特定電腦，即使失敗也不會退回掃描而誤連其他電腦
     fun selectServer(uuid: String) {
         Log.d("SWITCH_PC", "手動切換至電腦 UUID: $uuid")
+        _userWantsOffline.value = false // 手動點選新對象重設意圖
         pairingManager.setSelectedServerUuid(uuid)
         wifiNetworkIdProvider.getCurrentBssid()?.let { bssid ->
             networkProfileStore.setDefaultServerUuid(bssid, uuid)
@@ -291,6 +319,14 @@ class TouchpadViewModel(
         } else {
             orchestrator.start()
         }
+    }
+
+    // 【新增】：手動中斷連線。停止協調器、關閉 WebSocket、設定標記防止開關選單重連
+    fun disconnect() {
+        Log.d("DISCONNECT", "使用者手動中斷連線")
+        _userWantsOffline.value = true
+        orchestrator.stop()
+        wsClient.close()
     }
 
     fun deleteServer(uuid: String) {
@@ -316,7 +352,8 @@ class TouchpadViewModel(
         pendingPairServer = null
         _pairingNavState.value = PairingNavState.Hidden
 
-        if (connState.value != ConnState.CONNECTED && pairingManager.getSavedServers().isNotEmpty()) {
+        // 【修正】：只有在「使用者未主動斷開」且「目前未連上」時，關閉選單才重啟自動協調器
+        if (!_userWantsOffline.value && connState.value != ConnState.CONNECTED && pairingManager.getSavedServers().isNotEmpty()) {
             orchestrator.start()
         }
     }
@@ -332,12 +369,15 @@ class TouchpadViewModel(
 
     private fun startPairingScan() {
         _unpairedDiscovered.value = emptyList()
+        _onlineSavedUuids.value = emptySet()
         _isScanning.value = true
         pairingManager.discover(
             timeoutMs = 5000,
             onFound = { server ->
                 val savedList = pairingManager.getSavedServers()
-                if (!savedList.any { it.uuid == server.uuid }) {
+                if (savedList.any { it.uuid == server.uuid }) {
+                    _onlineSavedUuids.value = _onlineSavedUuids.value + server.uuid
+                } else {
                     val currentList = _unpairedDiscovered.value.toMutableList()
                     if (!currentList.any { it.uuid == server.uuid }) {
                         currentList.add(server)

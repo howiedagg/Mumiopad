@@ -1,3 +1,5 @@
+// D:/howie/Documents/vr-touchpad-app/vr-touchpad-app/android-app/app/src/main/java/com/example/vrtouchpad/ui/components/StatusBar.kt
+
 package com.example.vrtouchpad.ui.components
 
 import androidx.compose.foundation.background
@@ -25,6 +27,7 @@ import com.example.vrtouchpad.network.ConnState
 @Composable
 fun StatusBar(
     connState: ConnState,
+    connectedServerName: String?, // 【新增】：當前連線成功的實體主機名
     isKeyboardOpen: Boolean,
     onSettingsClick: () -> Unit,
     onStatusClick: () -> Unit,
@@ -38,20 +41,21 @@ fun StatusBar(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         val dotColor = when (connState) {
-            ConnState.CONNECTED -> Color(0xFF4CAF50)      // 綠燈
+            ConnState.CONNECTED -> Color(0xFF4CAF50)      // 綠燈：使用中
             ConnState.CONNECTING, ConnState.PAIRING -> Color(0xFFFFA000) // 橘燈
             ConnState.DISCONNECTED, ConnState.AUTH_FAILED -> Color(0xFF757575) // 灰燈
         }
 
+        // 極簡膠囊文字：已連線時自動展示該電腦名
         val statusText = when (connState) {
             ConnState.DISCONNECTED -> "未連線"
             ConnState.CONNECTING -> "搜尋中"
             ConnState.PAIRING -> "配對中"
-            ConnState.CONNECTED -> "已連線"
+            ConnState.CONNECTED -> connectedServerName ?: "已連線"
             ConnState.AUTH_FAILED -> "驗證失敗"
         }
 
-        // --- 膠囊狀態晶片 (Status Pill) ---
+        // --- 狀態膠囊 ---
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
@@ -84,8 +88,6 @@ fun StatusBar(
             )
         }
 
-        // 【修改】：右側輔助按鈕改為 icon-only 圓形按鈕，縮小佔用寬度，
-        // 讓狀態膠囊在窄螢幕上不會被文字按鈕擠壓。
         Row(verticalAlignment = Alignment.CenterVertically) {
             if (connState == ConnState.CONNECTED) {
                 IconGlyphButton(

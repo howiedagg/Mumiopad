@@ -1,4 +1,5 @@
 # pc-server-python/src/tray.py
+
 import sys
 import socket
 from pathlib import Path
@@ -13,9 +14,10 @@ REG_RUN_PATH = r"Software\Microsoft\Windows\CurrentVersion\Run"
 REG_APP_NAME = "MumiopadServer"
 
 class TrayIconManager:
-    def __init__(self, on_exit_callback):
+    def __init__(self, on_exit_callback, on_unpair_callback=None):
         self.tray_icon = None
         self.on_exit = on_exit_callback
+        self.on_unpair = on_unpair_callback
 
     def is_startup_enabled(self) -> bool:
         if not IS_WINDOWS:
@@ -53,11 +55,21 @@ class TrayIconManager:
 
     def remove_device_and_refresh(self, token: str):
         remove_device_token(token)
+        if self.on_unpair:
+            self.on_unpair(token)
         self.update_menu()
 
     def clear_all_and_refresh(self):
+        config = load_config()
+        for dev in config.get("authorized_tokens", []):
+            if self.on_unpair:
+                self.on_unpair(dev["token"])
         clear_all_pairings()
         self.update_menu()
+
+    # 【新增】：專屬閉包生成器，將 token 鎖死在獨立的函數範疇中，並用 *args 隔絕系統參數干擾
+    def make_remove_action(self, token: str):
+        return lambda *args: self.remove_device_and_refresh(token)
 
     def update_menu(self):
         if not self.tray_icon:
@@ -77,13 +89,17 @@ class TrayIconManager:
                 device_submenu_items.append(
                     pystray.MenuItem(
                         f"解除「{name}」", 
-                        action=lambda item, t=token: self.remove_device_and_refresh(t)
+                        # 【修正】：改用 `make_remove_action` 生成點擊事件，解決參數覆蓋 Bug
+                        action=self.make_remove_action(token)
                     )
                 )
             
             device_submenu_items.append(pystray.Menu.SEPARATOR)
             device_submenu_items.append(
-                pystray.MenuItem("清除所有信任裝置", lambda item: self.clear_all_and_refresh())
+                pystray.MenuItem(
+                    "清除所有信任裝置", 
+                    action=lambda *args: self.clear_all_and_refresh()
+                )
             )
 
         menu_items = [
@@ -96,13 +112,13 @@ class TrayIconManager:
             menu_items.append(
                 pystray.MenuItem(
                     "開機自動啟動", 
-                    action=lambda item: self.toggle_startup_setting(),
-                    checked=lambda item: self.is_startup_enabled()
+                    action=lambda *args: self.toggle_startup_setting(),
+                    checked=lambda *args: self.is_startup_enabled()
                 )
             )
             menu_items.append(pystray.Menu.SEPARATOR)
             
-        menu_items.append(pystray.MenuItem("結束程式", lambda icon, item: self.on_exit()))
+        menu_items.append(pystray.MenuItem("結束程式", lambda *args: self.on_exit()))
         self.tray_icon.menu = pystray.Menu(*menu_items)
 
     def run(self):

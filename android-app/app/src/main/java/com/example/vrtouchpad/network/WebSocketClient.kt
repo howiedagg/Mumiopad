@@ -227,5 +227,6 @@ class TouchpadWebSocketClient(
     fun close() {
         ws?.close(1000, "bye")
         ws = null
+        _connState.value = ConnState.DISCONNECTED
     }
 }

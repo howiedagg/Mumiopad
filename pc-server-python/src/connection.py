@@ -1,4 +1,5 @@
 # pc-server-python/src/connection.py
+
 import asyncio
 import json
 import socket
@@ -12,9 +13,11 @@ HOST = "0.0.0.0"
 PORT = 8765
 
 class ConnectionManager:
-    def __init__(self, server_uuid: str, on_update_menu_callback=None):
+    # 【修正】：建構子直接接收運作中的 `loop` 物件，避免反向導入入口腳本
+    def __init__(self, server_uuid: str, loop: asyncio.AbstractEventLoop, on_update_menu_callback=None):
         self.server_uuid = server_uuid
-        self.active_connections = set()
+        self.loop = loop  # 【新增】：保存事件循環物件
+        self.active_connections = {}  # 對應 token -> websocket 連線
         self.on_update_menu = on_update_menu_callback
 
     def show_pairing_dialog_windows(self, device_name: str) -> bool:
@@ -28,11 +31,18 @@ class ConnectionManager:
             return result == 6  # IDYES = 6
         return True
 
+    # 【修正】：直接使用傳入的 `self.loop` 安全跨執行緒中斷實體連線，徹底避開 None 陷阱
+    def close_connection_by_token(self, token: str):
+        websocket = self.active_connections.get(token)
+        if websocket:
+            if websocket.transport:
+                if self.loop:
+                    self.loop.call_soon_threadsafe(websocket.transport.close)
+
     async def handler(self, websocket):
         authed = False
         current_token = None
         peer = websocket.remote_address
-        self.active_connections.add(websocket)
         print(f"新連線要求: {peer}")
 
         try:
@@ -62,6 +72,8 @@ class ConnectionManager:
                             authed = True
                             current_token = new_token
                             
+                            self.active_connections[current_token] = websocket
+
                             await websocket.send(json.dumps({
                                 "type": "pair_success", 
                                 "token": new_token,
@@ -82,6 +94,9 @@ class ConnectionManager:
                         if token in allowed_tokens:
                             authed = True
                             current_token = token
+                            
+                            self.active_connections[current_token] = websocket
+
                             await websocket.send(json.dumps({"type": "auth_ok"}))
                         else:
                             await websocket.send(json.dumps({"type": "auth_fail"}))
@@ -105,7 +120,8 @@ class ConnectionManager:
         except Exception:
             pass
         finally:
-            self.active_connections.discard(websocket)
+            if current_token and current_token in self.active_connections:
+                del self.active_connections[current_token]
 
     async def handle_event(self, msg: dict):
         t = msg.get("type")

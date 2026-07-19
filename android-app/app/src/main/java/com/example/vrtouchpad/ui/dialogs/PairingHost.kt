@@ -1,3 +1,5 @@
+// D:/howie/Documents/vr-touchpad-app/vr-touchpad-app/android-app/app/src/main/java/com/example/vrtouchpad/ui/dialogs/PairingHost.kt
+
 package com.example.vrtouchpad.ui.dialogs
 
 import androidx.compose.runtime.Composable
@@ -9,12 +11,15 @@ import com.example.vrtouchpad.ui.PairingNavState
 fun PairingHost(
     navState: PairingNavState,
     savedServers: List<SavedServer>,
+    onlineSavedUuids: Set<String>,
+    connectedUuid: String?,
     unpairedDiscovered: List<DiscoveredServer>,
     isScanning: Boolean,
     isPairingBusy: Boolean,
     pairingError: String?,
     onSelectSaved: (String) -> Unit,
     onDeleteSaved: (String) -> Unit,
+    onDisconnect: () -> Unit, // 【新增】
     onStartPairing: (DiscoveredServer) -> Unit,
     onBackToList: () -> Unit,
     onDismiss: () -> Unit,
@@ -24,10 +29,13 @@ fun PairingHost(
 
         is PairingNavState.DeviceList -> DeviceListScreen(
             savedServers = savedServers,
+            onlineSavedUuids = onlineSavedUuids,
+            connectedUuid = connectedUuid,
             unpairedDiscovered = unpairedDiscovered,
             isScanning = isScanning,
             onSelectSaved = onSelectSaved,
             onDeleteSaved = onDeleteSaved,
+            onDisconnect = onDisconnect, // 【新增】
             onStartPairing = onStartPairing,
             onDismiss = onDismiss,
         )

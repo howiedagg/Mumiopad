@@ -151,7 +151,7 @@ fun WelcomeOnboarding(
                                             modifier = Modifier
                                                 .size(8.dp)
                                                 .clip(CircleShape)
-                                                .background(Color(0xFF42A5F5))
+                                                .background(Color(0xFFFFA000)) // 【修正】：將發現新電腦燈號改為橘黃色
                                         )
                                         Spacer(Modifier.width(16.dp))
                                         Column {
