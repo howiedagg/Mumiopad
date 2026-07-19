@@ -16,6 +16,7 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 
@@ -108,6 +109,7 @@ fun InvisibleKeyboardInput(
             keyboardOptions = KeyboardOptions(
                 capitalization = KeyboardCapitalization.None,
                 autoCorrect = false,
+                keyboardType = KeyboardType.Password,
                 imeAction = ImeAction.Default
             ),
             textStyle = androidx.compose.ui.text.TextStyle(color = Color.Transparent)

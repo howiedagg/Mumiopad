@@ -64,7 +64,8 @@ class TouchpadViewModelFactory(private val context: Context) : ViewModelProvider
             settingsStore = settingsStore,
             wifiPerformanceManager = wifiPerformanceManager,
             wifiNetworkIdProvider = wifiNetworkIdProvider,
-            networkProfileStore = networkProfileStore
+            networkProfileStore = networkProfileStore,
+            context = appContext // 💡 修正：補上遺漏的 context 參數，解決編譯失敗問題！
         ) as T
     }
 }
@@ -87,7 +88,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.setBackgroundDrawable(0xFF1E1E1E.toInt().toDrawable())
-        checkAndRequestLocationPermissions()
+        checkAndRequestPermissions()
 
         setContent {
             MaterialTheme {
@@ -99,22 +100,24 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun checkAndRequestLocationPermissions() {
-        val hasFine = ContextCompat.checkSelfPermission(
-            this, Manifest.permission.ACCESS_FINE_LOCATION
-        ) == PackageManager.PERMISSION_GRANTED
+    private fun checkAndRequestPermissions() {
+        val permissionsToRequest = mutableListOf<String>()
 
-        val hasCoarse = ContextCompat.checkSelfPermission(
-            this, Manifest.permission.ACCESS_COARSE_LOCATION
-        ) == PackageManager.PERMISSION_GRANTED
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+            permissionsToRequest.add(Manifest.permission.ACCESS_FINE_LOCATION)
+        }
 
-        if (!hasFine && !hasCoarse) {
-            requestPermissionLauncher.launch(
-                arrayOf(
-                    Manifest.permission.ACCESS_FINE_LOCATION,
-                    Manifest.permission.ACCESS_COARSE_LOCATION
-                )
-            )
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+                permissionsToRequest.add(Manifest.permission.BLUETOOTH_CONNECT)
+            }
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_ADVERTISE) != PackageManager.PERMISSION_GRANTED) {
+                permissionsToRequest.add(Manifest.permission.BLUETOOTH_ADVERTISE)
+            }
+        }
+
+        if (permissionsToRequest.isNotEmpty()) {
+            requestPermissionLauncher.launch(permissionsToRequest.toTypedArray())
         }
     }
 
@@ -122,11 +125,11 @@ class MainActivity : ComponentActivity() {
         if (::touchpadViewModel.isInitialized && touchpadViewModel.connState.value == ConnState.CONNECTED) {
             when (keyCode) {
                 KeyEvent.KEYCODE_VOLUME_UP -> {
-                    touchpadViewModel.wsClient.sendKeypress("VOLUME_UP")
+                    touchpadViewModel.sendKeypress("VOLUME_UP") // 💡 修正：調用 viewModel 統一分流
                     return true
                 }
                 KeyEvent.KEYCODE_VOLUME_DOWN -> {
-                    touchpadViewModel.wsClient.sendKeypress("VOLUME_DOWN")
+                    touchpadViewModel.sendKeypress("VOLUME_DOWN") // 💡 修正：調用 viewModel 統一分流
                     return true
                 }
             }
@@ -138,6 +141,7 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun AppRoot(viewModel: TouchpadViewModel) {
     val scope = rememberCoroutineScope()
+    val context = androidx.compose.ui.platform.LocalContext.current
 
     val connState by viewModel.connState.collectAsState()
     val pairingNavState by viewModel.pairingNavState.collectAsState()
@@ -156,6 +160,9 @@ fun AppRoot(viewModel: TouchpadViewModel) {
     val connectedServerName by viewModel.connectedServerName.collectAsState()
     val connectedServerUuid by viewModel.connectedServerUuid.collectAsState()
     val onlineSavedUuids by viewModel.onlineSavedUuids.collectAsState()
+
+    val connectionMode by viewModel.connectionMode.collectAsState()
+    val btBondedDevices by viewModel.btBondedDevices.collectAsState()
 
     var showSettings by remember { mutableStateOf(false) }
 
@@ -212,8 +219,8 @@ fun AppRoot(viewModel: TouchpadViewModel) {
 
             InvisibleKeyboardInput(
                 active = isKeyboardActive && connState == ConnState.CONNECTED,
-                onSendText = { viewModel.wsClient.sendText(it) },
-                onSendKey = { viewModel.wsClient.sendKeypress(it) },
+                onSendText = { viewModel.sendText(it) }, // 💡 修正：調用 viewModel 統一分流
+                onSendKey = { viewModel.sendKeypress(it) }, // 💡 修正：調用 viewModel 統一分流
                 onKeyboardDismissed = { viewModel.setKeyboardActive(false) }
             )
 
@@ -222,11 +229,23 @@ fun AppRoot(viewModel: TouchpadViewModel) {
                     modifier = Modifier.weight(1f).fillMaxWidth(),
                     unpairedDiscovered = unpairedDiscovered,
                     isScanning = isScanning,
-                    isPairingBusy = isPairingBusy,
                     pairingError = pairingError,
                     pairingNavState = pairingNavState,
                     onStartPairing = { server -> viewModel.triggerPairing(server) },
-                    onCancelPairing = { viewModel.cancelPairing() }
+                    onCancelPairing = { viewModel.cancelPairing() },
+                    onModeChange = { mode -> viewModel.setConnectionMode(mode) },
+                    onMakeBtDiscoverable = {
+                        val discoverableIntent = android.content.Intent(android.bluetooth.BluetoothAdapter.ACTION_REQUEST_DISCOVERABLE).apply {
+                            putExtra(android.bluetooth.BluetoothAdapter.EXTRA_DISCOVERABLE_DURATION, 120)
+                        }
+                        context.startActivity(discoverableIntent)
+                    },
+                    btBondedDevices = btBondedDevices,
+                    btConnState = connState,
+                    onConnectBt = { device -> viewModel.connectBluetooth(device) },
+                    // 💡 修正：安全橋接 ViewModel 的首次開卡與狀態同步參數
+                    isFirstLaunch = viewModel.isFirstLaunch,
+                    connectionMode = connectionMode
                 )
             } else {
                 Touchpad(
@@ -237,7 +256,7 @@ fun AppRoot(viewModel: TouchpadViewModel) {
                     reverseScroll = reverseScroll,
                     scope = scope,
                     isKeyboardActive = isKeyboardActive,
-                    onOutEvent = { viewModel.wsClient.sendEvent(it) },
+                    onOutEvent = { viewModel.sendEvent(it) },
                     onToggleKeyboard = { viewModel.toggleKeyboard() }
                 )
             }
@@ -246,6 +265,8 @@ fun AppRoot(viewModel: TouchpadViewModel) {
         if (!showOnboarding) {
             PairingHost(
                 navState = pairingNavState,
+                connectionMode = connectionMode,
+                onModeChange = { viewModel.setConnectionMode(it) },
                 savedServers = savedServers,
                 onlineSavedUuids = onlineSavedUuids,
                 connectedUuid = connectedServerUuid,
@@ -260,6 +281,16 @@ fun AppRoot(viewModel: TouchpadViewModel) {
                 onRescan = { viewModel.startPairingScan(clearExisting = true) },
                 onBackToList = { viewModel.cancelPairing() },
                 onDismiss = { viewModel.closeServerSelector() },
+                btBondedDevices = btBondedDevices,
+                btConnState = connState,
+                onConnectBt = { device -> viewModel.connectBluetooth(device) },
+                onDisconnectBt = { viewModel.disconnectBluetooth() },
+                onMakeBtDiscoverable = {
+                    val discoverableIntent = android.content.Intent(android.bluetooth.BluetoothAdapter.ACTION_REQUEST_DISCOVERABLE).apply {
+                        putExtra(android.bluetooth.BluetoothAdapter.EXTRA_DISCOVERABLE_DURATION, 120)
+                    }
+                    context.startActivity(discoverableIntent)
+                }
             )
         }
         if (showSettings) {

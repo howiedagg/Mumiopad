@@ -17,7 +17,7 @@
     <string name="settings_done">完成</string>
 
     <!-- Device List Dialog -->
-    <string name="dialog_select_computer">選擇電腦</string>
+    <string name="dialog_select_computer">選擇裝置</string>
     <string name="dialog_refresh">重新整理</string>
     <string name="dialog_unpair">解除配對</string>
     <string name="dialog_unpair_confirm_title">解除配對</string>
@@ -26,21 +26,21 @@
     <string name="dialog_cancel">取消</string>
     <string name="dialog_close">關閉</string>
     <string name="dialog_back">返回</string>
-    <string name="dialog_scanning">搜尋附近電腦中...</string>
-    <string name="dialog_no_devices">未發現任何電腦，請確認電腦端伺服器已開啟</string>
+    <string name="dialog_scanning">搜尋附近裝置中...</string>
+    <string name="dialog_no_devices">未發現任何裝置，請確認伺服器已開啟</string>
     <string name="dialog_offline">離線</string>
     <string name="dialog_unpaired">未配對</string>
-    <string name="dialog_unpaired_pc_default">未配對電腦</string>
+    <string name="dialog_unpaired_pc_default">未配對裝置</string>
 
     <!-- Pair Dialog (Legacy / Alternative) -->
     <string name="dialog_enter_pair_code">輸入配對碼</string>
-    <string name="dialog_pair_code_instruction">請輸入電腦 (%1$s) 畫面上顯示的 6 位驗證配對碼：</string>
+    <string name="dialog_pair_code_instruction">請輸入裝置 (%1$s) 畫面上顯示的 6 位驗證配對碼：</string>
     <string name="dialog_pair_code_label">6位配對碼</string>
-    <string name="dialog_trusted_computers">信任的電腦：</string>
+    <string name="dialog_trusted_computers">信任的裝置：</string>
     <string name="dialog_no_history">無歷史綁定紀錄</string>
     <string name="dialog_delete">刪除</string>
-    <string name="dialog_new_computers">新發現的未配對電腦：</string>
-    <string name="dialog_no_new_computers">未發現其他新電腦...</string>
+    <string name="dialog_new_computers">新發現的未配對裝置：</string>
+    <string name="dialog_no_new_computers">未發現其他新裝置...</string>
     <string name="dialog_pair">配對</string>
     <string name="dialog_confirm_pair">確認配對</string>
 
@@ -49,17 +49,28 @@
     <string name="touchpad_not_connected">尚未連線</string>
 
     <!-- Onboarding / Waiting screen -->
-    <string name="onboarding_searching">正在尋找電腦...</string>
-    <string name="onboarding_hint">請確保已在電腦上啟動伺服器\n且處於相同 Wi-Fi 網路</string>
-    <string name="onboarding_select_pc">選擇要連線的電腦</string>
+    <string name="onboarding_searching">正在尋找裝置...</string>
+    <string name="onboarding_hint">請確保已啟動伺服器\n且處於相同 Wi-Fi 網路</string>
+    <string name="onboarding_select_pc">選擇要連線的裝置</string>
     <string name="onboarding_click_to_pair">點擊配對</string>
     <string name="pairing_request_sent">配對請求已發送</string>
-    <string name="pairing_waiting_instruction">請在電腦「%1$s」上顯示的視窗中點擊「是」，以允許此裝置連線並控制滑鼠與鍵盤。</string>
+    <string name="pairing_waiting_instruction">請在裝置「%1$s」上顯示的視窗中點擊「是」，以允許此裝置連線並控制滑鼠與鍵盤。</string>
     <string name="pairing_busy_msg">正在連線配對中...</string>
 
     <!-- Network error fallback -->
-    <string name="err_denied">連線被拒絕。請在電腦上點選「是」</string>
-    <string name="err_network">連線失敗，請確認手機與電腦處於相同 Wi-Fi 網路</string>
+    <string name="err_denied">連線被拒絕。請在端點點選「是」</string>
+    <string name="err_network">連線失敗，請確認手機與裝置處於相同網路</string>
     <string name="err_fallback">配對失敗: %1$s</string>
-    <string name="snackbar_new_devices">發現 %1$d 台新電腦，點擊配對</string>
+    <string name="snackbar_new_devices">發現 %1$d 台新裝置，點擊配對</string>
+
+    <string name="bt_make_discoverable">開放藍牙配對</string>
+    <string name="bt_bonded_devices_title">已配對的裝置：</string>
+    <string name="bt_no_bonded_devices">未發現已配對的裝置</string>
+    <string name="bt_unknown_device">未知裝置</string>
+    <string name="status_connecting_dots">連線中...</string>
+
+    <!-- 💡 極簡 Onboarding 新增 -->
+    <string name="onboarding_choice_wifi">Wi-Fi</string>
+    <string name="onboarding_choice_bluetooth">藍牙</string>
+    <string name="onboarding_bt_title">藍牙配對</string>
 </resources>
