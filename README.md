@@ -10,7 +10,7 @@ It provides low-latency cursor control and keyboard input over a local Wi-Fi con
 
 ## 📥 Quick Start
 
-Please visit 👉 **[the Mumiopad Latest Downloads page](https://github.com/howiedagg/Mumiopad/issues)** to download the latest version.
+Please visit 👉 **[the Mumiopad Latest Downloads page](https://github.com/howiedagg/Mumiopad/releases)** to download the latest version.
 
 ### 1. Computer Setup (Windows)
 
