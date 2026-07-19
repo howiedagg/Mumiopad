@@ -41,7 +41,7 @@ Please visit 👉 **[the Mumiopad Latest Downloads page](https://github.com/howi
 | | Pinch Zoom | Windows Magnifier Zoom |
 | **3 Fingers** | Tap | Task View (Win + Tab) |
 | | Swipe Down | Show Desktop / Hide Keyboard |
-| | Swipe Up | Restore Windows / Show Keyboard |
+| | Swipe Up | Show Keyboard |
 | **4 Fingers** | Tap | Mouse Middle Click |
 | **Hardware Buttons** | Volume Keys | PC System Volume Control |
 
