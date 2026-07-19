@@ -152,6 +152,8 @@ class TouchpadWebSocketClient(
         when (json.optString("type")) {
             "pair_success" -> {
                 isPairingMode = false
+                // 【新增】：配對成功時，同步更新 Socket 狀態為已連線，以便外部狀態流同步
+                _connState.value = ConnState.CONNECTED
                 val token = json.optString("token")
                 val pcName = json.optString("pc_name", "我的電腦")
                 onPairSuccess(token, pcName)

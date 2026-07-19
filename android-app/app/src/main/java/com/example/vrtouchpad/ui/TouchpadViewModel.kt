@@ -18,6 +18,9 @@ import com.example.vrtouchpad.network.TouchpadWebSocketClient
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -29,9 +32,6 @@ class TouchpadViewModel(
     private val wifiNetworkIdProvider: WifiNetworkIdProvider,
     private val networkProfileStore: NetworkProfileStore
 ) : ViewModel() {
-
-    private val _connState = MutableStateFlow(ConnState.DISCONNECTED)
-    val connState: StateFlow<ConnState> = _connState
 
     private val _unpairedDiscovered = MutableStateFlow<List<DiscoveredServer>>(emptyList())
     val unpairedDiscovered: StateFlow<List<DiscoveredServer>> = _unpairedDiscovered
@@ -82,8 +82,6 @@ class TouchpadViewModel(
             pendingPairServer = null
 
             refreshServerLists()
-            _connState.value = ConnState.CONNECTED
-            wifiPerformanceManager.acquire()
             _pairingNavState.value = PairingNavState.Hidden
             _unpairedDiscovered.value = emptyList()
         },
@@ -94,7 +92,6 @@ class TouchpadViewModel(
                 "network_error" -> "連線失敗，請確認手機與電腦處於相同 Wi-Fi 網路"
                 else -> "配對失敗: $reason"
             }
-            _connState.value = ConnState.DISCONNECTED
         }
     )
 
@@ -106,7 +103,6 @@ class TouchpadViewModel(
         getLastKnownIp = { uuid -> pairingManager.getSavedServers().find { it.uuid == uuid }?.lastKnownIp },
         updateLastKnownIp = { uuid, ip -> pairingManager.updateLastKnownIp(uuid, ip) },
         discover = { timeoutMs, onFound, onFinished ->
-            // 【整合點】：在背景協調器發起掃描時，攔截新發現的未配對電腦資訊
             pairingManager.discover(
                 timeoutMs = timeoutMs,
                 onFound = { server ->
@@ -126,29 +122,43 @@ class TouchpadViewModel(
         dial = ::dialAdapter,
     )
 
+    // 【重構】：合併連線狀態。將協調器尋找過程與 Socket 的實際狀態進行綁定，保證連線資訊即時且同步
+    val connState: StateFlow<ConnState> = combine(
+        orchestrator.phase,
+        wsClient.connState
+    ) { orthoPhase, wsState ->
+        when {
+            // 1. 若實體 Socket 處於已連線、驗證失敗或配對中，以實體狀態為最高優先級
+            wsState == ConnState.CONNECTED -> ConnState.CONNECTED
+            wsState == ConnState.AUTH_FAILED -> ConnState.AUTH_FAILED
+            wsState == ConnState.PAIRING -> ConnState.PAIRING
+
+            // 2. 若協調器或實體 Socket 正處於連線嘗試，則向 UI 回報 Connecting（黃燈）
+            orthoPhase is ConnectionOrchestrator.Phase.Connecting || wsState == ConnState.CONNECTING -> ConnState.CONNECTING
+
+            // 3. 其餘狀況為斷開
+            else -> ConnState.DISCONNECTED
+        }
+    }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = ConnState.DISCONNECTED
+    )
+
     init {
         refreshServerLists()
 
-        // 為了使初次引導畫面一開啟時能「免點選、自動進行掃描探索」
         if (pairingManager.getSavedServers().isEmpty()) {
             startPairingScan()
         } else {
-            // 只有在已有儲存電腦時，才啟動自動連線協調器，防止初次使用時產生掃描衝突
             orchestrator.start()
         }
 
+        // 訂閱合併連線狀態，用來控管 WiFi 低延遲效能鎖與清理 UI 暫存
         viewModelScope.launch {
-            orchestrator.phase.collect { phase ->
-                if (_pairingNavState.value != PairingNavState.Hidden && _savedServers.value.isEmpty()) return@collect
-                _connState.value = when (phase) {
-                    is ConnectionOrchestrator.Phase.Idle -> ConnState.DISCONNECTED
-                    is ConnectionOrchestrator.Phase.Connecting -> ConnState.CONNECTING
-                    is ConnectionOrchestrator.Phase.Connected -> {
-                        _unpairedDiscovered.value = emptyList() // 連上後清空新發現暫存
-                        ConnState.CONNECTED
-                    }
-                }
-                if (phase is ConnectionOrchestrator.Phase.Connected) {
+            connState.collect { state ->
+                if (state == ConnState.CONNECTED) {
+                    _unpairedDiscovered.value = emptyList() // 連上後清空新發現暫存
                     wifiPerformanceManager.acquire()
                 } else {
                     wifiPerformanceManager.release()
@@ -156,6 +166,7 @@ class TouchpadViewModel(
             }
         }
 
+        // 訂閱實體連線與重連機制
         viewModelScope.launch {
             wsClient.connState.collect { state ->
                 if (state == ConnState.AUTH_FAILED) {
@@ -167,6 +178,12 @@ class TouchpadViewModel(
                         pairingManager.deleteServer(failedUuid)
                         networkProfileStore.removeAllReferencesTo(failedUuid)
                         refreshServerLists()
+                    }
+                } else if (state == ConnState.DISCONNECTED) {
+                    // 【優化】：斷線自動重連機制。若在前景、已有信任電腦，且非選單/手動配對狀態下，重新喚醒協調器
+                    if (isAppActive && pairingManager.getSavedServers().isNotEmpty() && _pairingNavState.value == PairingNavState.Hidden) {
+                        Log.d("RECONNECT", "Socket 斷開且處於前景，重新喚醒自動連線協調器")
+                        orchestrator.start()
                     }
                 }
             }
@@ -194,14 +211,12 @@ class TouchpadViewModel(
     fun updateAppActive(active: Boolean) {
         isAppActive = active
         if (active) {
-            // 只有在有名冊紀錄時，重新回到前景才需啟用協調器
-            if (pairingManager.getSavedServers().isNotEmpty()) {
+            if (connState.value != ConnState.CONNECTED && pairingManager.getSavedServers().isNotEmpty()) {
                 orchestrator.start()
             }
         } else {
             orchestrator.stop()
             wsClient.close()
-            _connState.value = ConnState.DISCONNECTED
             wifiPerformanceManager.release()
         }
     }
@@ -245,7 +260,6 @@ class TouchpadViewModel(
         _isPairingBusy.value = false
         _pairingNavState.value = PairingNavState.DeviceList
 
-        // 取消配對時，若有名冊則啟動協調器，否則只啟用基礎配對掃描
         if (pairingManager.getSavedServers().isEmpty()) {
             startPairingScan()
         } else {
@@ -253,6 +267,8 @@ class TouchpadViewModel(
         }
     }
 
+    // 【修正】：手動切換至指定電腦。
+    // 優先調用 manualConnect 直連該特定電腦，即使失敗也不會退回掃描而誤連其他電腦
     fun selectServer(uuid: String) {
         Log.d("SWITCH_PC", "手動切換至電腦 UUID: $uuid")
         pairingManager.setSelectedServerUuid(uuid)
@@ -260,21 +276,32 @@ class TouchpadViewModel(
             networkProfileStore.setDefaultServerUuid(bssid, uuid)
         }
         wsClient.close()
-        _connState.value = ConnState.DISCONNECTED
         _pairingNavState.value = PairingNavState.Hidden
-        orchestrator.start()
+
+        val targetServer = pairingManager.getSavedServers().find { it.uuid == uuid }
+        if (targetServer != null) {
+            val ip = targetServer.lastKnownIp
+            if (ip != null) {
+                Log.d("SWITCH_PC", "啟動手動指定直連: ${targetServer.name} ($ip)")
+                orchestrator.manualConnect(targetServer, ip)
+            } else {
+                Log.d("SWITCH_PC", "無已知 IP 紀錄，啟動自動連線協調器")
+                orchestrator.start()
+            }
+        } else {
+            orchestrator.start()
+        }
     }
 
     fun deleteServer(uuid: String) {
         val activeUuid = pairingManager.getSelectedServerUuid()
-        if (activeUuid == uuid && _connState.value == ConnState.CONNECTED) {
+        if (activeUuid == uuid && connState.value == ConnState.CONNECTED) {
             runCatching { wsClient.sendUnpairRequest() }
             wsClient.close()
-            _connState.value = ConnState.DISCONNECTED
         }
         pairingManager.deleteServer(uuid)
         networkProfileStore.removeAllReferencesTo(uuid)
-        refreshServerLists() // 這會更新 _savedServers 的數值
+        refreshServerLists()
 
         if (pairingManager.getSavedServers().isEmpty()) {
             _pairingNavState.value = PairingNavState.Hidden
@@ -289,8 +316,7 @@ class TouchpadViewModel(
         pendingPairServer = null
         _pairingNavState.value = PairingNavState.Hidden
 
-        // 關閉管理選單時，若有名冊才重啟連線協調器
-        if (pairingManager.getSavedServers().isNotEmpty()) {
+        if (connState.value != ConnState.CONNECTED && pairingManager.getSavedServers().isNotEmpty()) {
             orchestrator.start()
         }
     }
