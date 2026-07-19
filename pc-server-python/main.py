@@ -42,8 +42,8 @@ def run_tray():
         on_exit_callback=on_exit_clicked,
         on_unpair_callback=on_unpair_clicked
     )
-    tray_thread = threading.Thread(target=tray_manager.run)
-    tray_thread.start()
+    # 改回最安全、直接運行的結構
+    tray_manager.run()
 
 async def main():
     global loop, connection_manager 

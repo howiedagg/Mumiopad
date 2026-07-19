@@ -109,7 +109,7 @@ class SmoothMouseEngine:
             except Exception:
                 pass
 
-        smooth_mouse = SmoothMouseEngine()
+smooth_mouse = SmoothMouseEngine()
 
 def apply_move(dx: float, dy: float):
     smooth_mouse.add_movement(dx, dy)

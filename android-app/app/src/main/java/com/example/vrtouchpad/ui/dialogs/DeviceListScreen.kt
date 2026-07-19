@@ -39,7 +39,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.style.TextAlign
+// 【新增】：匯入系統觸覺回饋 API
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.unit.dp
 import com.example.vrtouchpad.data.DiscoveredServer
 import com.example.vrtouchpad.data.SavedServer
@@ -54,11 +56,14 @@ fun DeviceListScreen(
     isScanning: Boolean,
     onSelectSaved: (String) -> Unit,
     onDeleteSaved: (String) -> Unit,
-    onDisconnect: () -> Unit, // 【新增】：中斷連線回呼
+    onDisconnect: () -> Unit,
     onStartPairing: (DiscoveredServer) -> Unit,
     onDismiss: () -> Unit,
 ) {
     var serverToDelete by remember { mutableStateOf<SavedServer?>(null) }
+
+    // 【新增】：取得當前畫面底層的系統震動回饋管理器
+    val haptic = LocalHapticFeedback.current
 
     if (serverToDelete != null) {
         AlertDialog(
@@ -108,9 +113,9 @@ fun DeviceListScreen(
                         val isOnline = onlineSavedUuids.contains(server.uuid)
 
                         val dotColor = when {
-                            isConnected -> Color(0xFF4CAF50) // 🟢 綠燈：連線使用中
-                            isOnline -> Color(0xFF42A5F5)    // 🔵 藍燈：在線待命
-                            else -> Color(0xFF757575)        // ⚪ 灰燈：目前離線
+                            isConnected -> Color(0xFF4CAF50)
+                            isOnline -> Color(0xFF42A5F5)
+                            else -> Color(0xFF757575)
                         }
 
                         val subtitle = when {
@@ -119,12 +124,13 @@ fun DeviceListScreen(
                             else -> "離線"
                         }
 
-                        // 【優化】：SwipeToDismissBox 滑動刪除效果。僅允許右向左滑（EndToStart）
                         val dismissState = rememberSwipeToDismissBoxState(
                             confirmValueChange = { value ->
                                 if (value == SwipeToDismissBoxValue.EndToStart) {
+                                    // 【新增】：在觸發滑動刪除時，同步震動一次給予實體反饋
+                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                                     serverToDelete = server
-                                    false // 返回 false 使其滑回原位，由對話框做最終處置
+                                    false
                                 } else false
                             }
                         )
@@ -163,7 +169,8 @@ fun DeviceListScreen(
                                 },
                                 onLongClick = {
                                     if (isConnected) {
-                                        // 【優化】：長按綠色列觸發手動中斷連線
+                                        // 【新增】：長按成功生效的瞬間，觸發手機微小扎實的長按震動回饋！
+                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                                         onDisconnect()
                                     }
                                 }
@@ -174,7 +181,7 @@ fun DeviceListScreen(
                         DeviceRow(
                             name = server.name,
                             subtitle = "未配對",
-                            dotColor = Color(0xFFFFA000), // 🟡 橘燈：新發現
+                            dotColor = Color(0xFFFFA000),
                             onClick = { onStartPairing(server) }
                         )
                     }
