@@ -1,5 +1,3 @@
-// D:/howie/Documents/vr-touchpad-app/vr-touchpad-app/android-app/app/src/main/java/com/example/vrtouchpad/MainActivity.kt
-
 package com.example.vrtouchpad
 
 import android.Manifest

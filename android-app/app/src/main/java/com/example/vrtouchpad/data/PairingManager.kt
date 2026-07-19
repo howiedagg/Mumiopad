@@ -173,7 +173,7 @@ class PairingManager(private val context: Context) {
                         val pcName = if (pcNameBytes != null) String(
                             pcNameBytes,
                             Charsets.UTF_8
-                        ) else "未配對電腦"
+                        ) else ""
 
                         onFound(DiscoveredServer(uuidPart, address, info.port, pcName))
                     }

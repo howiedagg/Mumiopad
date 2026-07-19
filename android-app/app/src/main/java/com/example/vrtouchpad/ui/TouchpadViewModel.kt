@@ -1,5 +1,3 @@
-// D:/howie/Documents/vr-touchpad-app/vr-touchpad-app/android-app/app/src/main/java/com/example/vrtouchpad/ui/TouchpadViewModel.kt
-
 package com.example.vrtouchpad.ui
 
 import android.util.Log
@@ -48,8 +46,8 @@ class TouchpadViewModel(
     private val _isScanning = MutableStateFlow(false)
     val isScanning: StateFlow<Boolean> = _isScanning
 
-    private val _pairingError = MutableStateFlow<String?>(null)
-    val pairingError: StateFlow<String?> = _pairingError
+    private val _pairingError = MutableStateFlow<PairingError?>(null)
+    val pairingError: StateFlow<PairingError?> = _pairingError
 
     private val _isKeyboardActive = MutableStateFlow(false)
     val isKeyboardActive: StateFlow<Boolean> = _isKeyboardActive
@@ -63,11 +61,9 @@ class TouchpadViewModel(
     private val _reverseScroll = MutableStateFlow(settingsStore.reverseScroll)
     val reverseScroll: StateFlow<Boolean> = _reverseScroll
 
-    // 儲存目前掃描到、在線上的「已配對歷史電腦」UUID 集合
     private val _onlineSavedUuids = MutableStateFlow<Set<String>>(emptySet())
     val onlineSavedUuids: StateFlow<Set<String>> = _onlineSavedUuids
 
-    // 使用者手動中斷標記，用來控制自動連線的行為
     private val _userWantsOffline = MutableStateFlow(false)
     val userWantsOffline: StateFlow<Boolean> = _userWantsOffline
 
@@ -96,9 +92,9 @@ class TouchpadViewModel(
         onPairFail = { reason ->
             _isPairingBusy.value = false
             _pairingError.value = when (reason) {
-                "denied" -> "連線被拒絕。請在電腦上點選「是」"
-                "network_error" -> "連線失敗，請確認手機與電腦處於相同 Wi-Fi 網路"
-                else -> "配對失敗: $reason"
+                "denied" -> PairingError.Denied
+                "network_error" -> PairingError.NetworkError
+                else -> PairingError.Unknown(reason)
             }
         }
     )
@@ -132,7 +128,6 @@ class TouchpadViewModel(
         dial = ::dialAdapter,
     )
 
-    // 融合連線狀態
     val connState: StateFlow<ConnState> = combine(
         orchestrator.phase,
         wsClient.connState
@@ -150,7 +145,6 @@ class TouchpadViewModel(
         initialValue = ConnState.DISCONNECTED
     )
 
-    // 當前連線成功的電腦 UUID
     val SkinnerUuid: StateFlow<String?> = combine(
         connState,
         _savedServers
@@ -158,7 +152,6 @@ class TouchpadViewModel(
         if (state == ConnState.CONNECTED) pairingManager.getSelectedServerUuid() else null
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
-    // 當前連線成功的電腦名，用來驅動極簡膠囊
     val connectedServerName: StateFlow<String?> = combine(
         orchestrator.phase,
         wsClient.connState,
@@ -169,7 +162,7 @@ class TouchpadViewModel(
                 is ConnectionOrchestrator.Phase.Connected -> orthoPhase.serverName
                 else -> {
                     val activeUuid = pairingManager.getSelectedServerUuid()
-                    savedList.find { it.uuid == activeUuid }?.name ?: "已連線"
+                    savedList.find { it.uuid == activeUuid }?.name
                 }
             }
         } else {
@@ -340,7 +333,6 @@ class TouchpadViewModel(
 
     fun deleteServer(uuid: String) {
         val activeUuid = pairingManager.getSelectedServerUuid()
-
         val serverToBeDeletedInfo = pairingManager.getSavedServers().find { it.uuid == uuid }
 
         if (activeUuid == uuid && connState.value == ConnState.CONNECTED) {

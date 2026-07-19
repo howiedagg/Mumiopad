@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<locale-config xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- 宣告此 App 支援英文 -->
+    <locale android:name="en"/>
+    <!-- 宣告此 App 支援繁體中文（Hant） -->
+    <locale android:name="zh-Hant"/>
+</locale-config>

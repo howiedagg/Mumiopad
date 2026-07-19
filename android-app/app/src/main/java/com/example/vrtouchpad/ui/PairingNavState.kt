@@ -15,3 +15,12 @@ sealed class PairingNavState {
     /** 等待電腦端點擊允許的授權畫面 */
     data class PairingWaiting(val server: DiscoveredServer) : PairingNavState()
 }
+
+/**
+ * 配對錯誤狀態，讓 ViewModel 只傳遞類型，由 UI 負責本地化翻譯
+ */
+sealed class PairingError {
+    object Denied : PairingError()
+    object NetworkError : PairingError()
+    data class Unknown(val reason: String) : PairingError()
+}

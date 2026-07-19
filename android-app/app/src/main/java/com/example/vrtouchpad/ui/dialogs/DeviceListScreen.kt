@@ -1,5 +1,3 @@
-// D:/howie/Documents/vr-touchpad-app/vr-touchpad-app/android-app/app/src/main/java/com/example/vrtouchpad/ui/dialogs/DeviceListScreen.kt
-
 package com.example.vrtouchpad.ui.dialogs
 
 import androidx.compose.animation.animateColorAsState
@@ -22,7 +20,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-// 【新增】：匯入 M3 內建的極簡 Refresh 圖示
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
@@ -46,7 +43,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import com.example.vrtouchpad.R
 import com.example.vrtouchpad.data.DiscoveredServer
 import com.example.vrtouchpad.data.SavedServer
 
@@ -62,7 +61,7 @@ fun DeviceListScreen(
     onDeleteSaved: (String) -> Unit,
     onDisconnect: () -> Unit,
     onStartPairing: (DiscoveredServer) -> Unit,
-    onRescan: () -> Unit, // 【新增】：重新整理連線對話框的回呼
+    onRescan: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     var serverToDelete by remember { mutableStateOf<SavedServer?>(null) }
@@ -71,18 +70,18 @@ fun DeviceListScreen(
     if (serverToDelete != null) {
         AlertDialog(
             onDismissRequest = { serverToDelete = null },
-            title = { Text("解除配對") },
-            text = { Text("確定要解除配對並刪除「${serverToDelete?.name}」嗎？") },
+            title = { Text(stringResource(R.string.dialog_unpair_confirm_title)) },
+            text = { Text(stringResource(R.string.dialog_unpair_confirm_msg, serverToDelete?.name ?: "")) },
             confirmButton = {
                 TextButton(
                     onClick = {
                         serverToDelete?.let { onDeleteSaved(it.uuid) }
                         serverToDelete = null
                     }
-                ) { Text("確定解除", color = Color(0xFFEF5350)) }
+                ) { Text(stringResource(R.string.dialog_confirm), color = Color(0xFFEF5350)) }
             },
             dismissButton = {
-                TextButton(onClick = { serverToDelete = null }) { Text("取消") }
+                TextButton(onClick = { serverToDelete = null }) { Text(stringResource(R.string.dialog_cancel)) }
             }
         )
     }
@@ -95,7 +94,7 @@ fun DeviceListScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text("選擇電腦")
+                Text(stringResource(R.string.dialog_select_computer))
                 if (isScanning) {
                     CircularProgressIndicator(
                         modifier = Modifier.size(20.dp),
@@ -103,7 +102,6 @@ fun DeviceListScreen(
                         color = MaterialTheme.colorScheme.primary
                     )
                 } else {
-                    // 【新增】：極簡無文字的「重新整理 🔄」IconButton，只在非掃描時悄悄出現
                     IconButton(
                         onClick = {
                             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
@@ -113,7 +111,7 @@ fun DeviceListScreen(
                     ) {
                         Icon(
                             imageVector = Icons.Default.Refresh,
-                            contentDescription = "重新整理",
+                            contentDescription = stringResource(R.string.dialog_refresh),
                             tint = Color.Gray,
                             modifier = Modifier.size(18.dp)
                         )
@@ -125,7 +123,7 @@ fun DeviceListScreen(
             val hasAny = savedServers.isNotEmpty() || unpairedDiscovered.isNotEmpty()
             if (!hasAny) {
                 Text(
-                    text = if (isScanning) "搜尋附近電腦中..." else "未發現任何電腦，請確認電腦端伺服器已開啟",
+                    text = if (isScanning) stringResource(R.string.dialog_scanning) else stringResource(R.string.dialog_no_devices),
                     style = MaterialTheme.typography.bodyMedium,
                     color = Color.Gray,
                 )
@@ -144,7 +142,7 @@ fun DeviceListScreen(
                         val subtitle = when {
                             isConnected -> null
                             isOnline -> null
-                            else -> "離線"
+                            else -> stringResource(R.string.dialog_offline)
                         }
 
                         val dismissState = rememberSwipeToDismissBoxState(
@@ -176,7 +174,7 @@ fun DeviceListScreen(
                                         .padding(horizontal = 16.dp),
                                     contentAlignment = Alignment.CenterEnd
                                 ) {
-                                    Text("解除配對", color = Color.White, style = MaterialTheme.typography.bodyMedium)
+                                    Text(stringResource(R.string.dialog_unpair), color = Color.White, style = MaterialTheme.typography.bodyMedium)
                                 }
                             }
                         ) {
@@ -199,9 +197,10 @@ fun DeviceListScreen(
                         }
                     }
                     items(unpairedDiscovered) { server ->
+                        val displayName = server.name.ifBlank { stringResource(R.string.dialog_unpaired_pc_default) }
                         DeviceRow(
-                            name = server.name,
-                            subtitle = "未配對",
+                            name = displayName,
+                            subtitle = stringResource(R.string.dialog_unpaired),
                             dotColor = Color(0xFFFFA000),
                             onClick = { onStartPairing(server) }
                         )
@@ -211,7 +210,7 @@ fun DeviceListScreen(
         },
         confirmButton = {},
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("關閉") }
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.dialog_close)) }
         },
     )
 }

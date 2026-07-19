@@ -1,4 +1,3 @@
-// android-app/app/src/main/java/com/example/vrtouchpad/ui/components/WelcomeOnboarding.kt
 package com.example.vrtouchpad.ui.components
 
 import androidx.compose.animation.AnimatedContent
@@ -21,9 +20,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.example.vrtouchpad.R
 import com.example.vrtouchpad.data.DiscoveredServer
+import com.example.vrtouchpad.ui.PairingError
 import com.example.vrtouchpad.ui.PairingNavState
 
 @Composable
@@ -32,7 +34,7 @@ fun WelcomeOnboarding(
     unpairedDiscovered: List<DiscoveredServer>,
     isScanning: Boolean,
     isPairingBusy: Boolean,
-    pairingError: String?,
+    pairingError: PairingError?,
     pairingNavState: PairingNavState,
     onStartPairing: (DiscoveredServer) -> Unit,
     onCancelPairing: () -> Unit,
@@ -51,19 +53,19 @@ fun WelcomeOnboarding(
         ) { state ->
             when (state) {
                 is PairingNavState.PairingWaiting -> {
-                    // 階段三：已向電腦發送連線請求
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.Center
                     ) {
                         Text(
-                            text = "已向電腦發送連線請求",
+                            text = stringResource(R.string.pairing_request_sent),
                             style = MaterialTheme.typography.titleMedium,
                             color = Color.White
                         )
                         Spacer(Modifier.height(8.dp))
+                        val targetName = state.server.name.ifBlank { stringResource(R.string.dialog_unpaired_pc_default) }
                         Text(
-                            text = "請在電腦螢幕上點選「是」以允許連線",
+                            text = stringResource(R.string.pairing_waiting_instruction, targetName),
                             style = MaterialTheme.typography.bodyMedium,
                             color = Color.Gray,
                             textAlign = TextAlign.Center
@@ -77,8 +79,13 @@ fun WelcomeOnboarding(
                                 color = MaterialTheme.colorScheme.primary
                             )
                         } else {
+                            val errorText = when (pairingError) {
+                                PairingError.Denied -> stringResource(R.string.err_denied)
+                                PairingError.NetworkError -> stringResource(R.string.err_network)
+                                is PairingError.Unknown -> stringResource(R.string.err_fallback, pairingError.reason)
+                            }
                             Text(
-                                text = pairingError,
+                                text = errorText,
                                 color = Color(0xFFEF5350),
                                 style = MaterialTheme.typography.bodyMedium,
                                 textAlign = TextAlign.Center
@@ -87,25 +94,24 @@ fun WelcomeOnboarding(
 
                         Spacer(Modifier.height(40.dp))
                         TextButton(onClick = onCancelPairing) {
-                            Text("取消", color = Color.Gray)
+                            Text(stringResource(R.string.dialog_cancel), color = Color.Gray)
                         }
                     }
                 }
                 else -> {
                     if (unpairedDiscovered.isEmpty()) {
-                        // 階段一：自動探索中
                         Column(
                             horizontalAlignment = Alignment.CenterHorizontally,
                             verticalArrangement = Arrangement.Center
                         ) {
                             Text(
-                                text = "正在尋找電腦...",
+                                text = stringResource(R.string.onboarding_searching),
                                 style = MaterialTheme.typography.titleMedium,
                                 color = Color.White
                             )
                             Spacer(Modifier.height(12.dp))
                             Text(
-                                text = "請確保已在電腦上啟動伺服器\n且處於相同 Wi-Fi 網路",
+                                text = stringResource(R.string.onboarding_hint),
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = Color.Gray,
                                 textAlign = TextAlign.Center
@@ -120,14 +126,13 @@ fun WelcomeOnboarding(
                             }
                         }
                     } else {
-                        // 階段二：直覺卡片式列表選擇
                         Column(
                             horizontalAlignment = Alignment.CenterHorizontally,
                             verticalArrangement = Arrangement.Center,
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Text(
-                                text = "選擇要連線的電腦",
+                                text = stringResource(R.string.onboarding_select_pc),
                                 style = MaterialTheme.typography.titleMedium,
                                 color = Color.White
                             )
@@ -138,6 +143,7 @@ fun WelcomeOnboarding(
                                 verticalArrangement = Arrangement.spacedBy(10.dp)
                             ) {
                                 items(unpairedDiscovered) { server ->
+                                    val displayName = server.name.ifBlank { stringResource(R.string.dialog_unpaired_pc_default) }
                                     Row(
                                         modifier = Modifier
                                             .fillMaxWidth()
@@ -151,17 +157,17 @@ fun WelcomeOnboarding(
                                             modifier = Modifier
                                                 .size(8.dp)
                                                 .clip(CircleShape)
-                                                .background(Color(0xFFFFA000)) // 【修正】：將發現新電腦燈號改為橘黃色
+                                                .background(Color(0xFFFFA000))
                                         )
                                         Spacer(Modifier.width(16.dp))
                                         Column {
                                             Text(
-                                                text = server.name,
+                                                text = displayName,
                                                 style = MaterialTheme.typography.bodyMedium,
                                                 color = Color.White
                                             )
                                             Text(
-                                                text = "點擊配對",
+                                                text = stringResource(R.string.onboarding_click_to_pair),
                                                 style = MaterialTheme.typography.bodySmall,
                                                 color = Color.Gray
                                             )

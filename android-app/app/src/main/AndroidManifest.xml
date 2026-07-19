@@ -20,7 +20,8 @@
         android:label="Mumiopad"
         android:theme="@style/Theme.VRTouchpad"
         android:icon="@android:drawable/ic_menu_manage"
-        android:usesCleartextTraffic="true">
+        android:usesCleartextTraffic="true"
+        android:localeConfig="@xml/locales_config" >
 
         <activity
             android:name=".MainActivity"

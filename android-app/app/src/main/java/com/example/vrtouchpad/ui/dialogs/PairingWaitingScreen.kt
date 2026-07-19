@@ -6,29 +6,29 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import com.example.vrtouchpad.R
 import com.example.vrtouchpad.data.DiscoveredServer
+import com.example.vrtouchpad.ui.PairingError
 
-/**
- * 等待授權授權畫面。
- * 取代原有需要手動輸入密碼的介面，提供零輸入、直覺化的一鍵體驗。
- */
 @Composable
 fun PairingWaitingScreen(
     server: DiscoveredServer,
-    pairingError: String?,
+    pairingError: PairingError?,
     onCancel: () -> Unit,
 ) {
     AlertDialog(
         onDismissRequest = onCancel,
-        title = { Text("配對請求已發送") },
+        title = { Text(stringResource(R.string.pairing_request_sent)) },
         text = {
             Column(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
+                val targetName = server.name.ifBlank { stringResource(R.string.dialog_unpaired_pc_default) }
                 Text(
-                    text = "請在電腦「${server.name}」上顯示的視窗中點擊「是」，以允許此裝置連線並控制滑鼠與鍵盤。",
+                    text = stringResource(R.string.pairing_waiting_instruction, targetName),
                     style = MaterialTheme.typography.bodyMedium,
                     color = Color.White
                 )
@@ -41,8 +41,13 @@ fun PairingWaitingScreen(
                         color = MaterialTheme.colorScheme.primary
                     )
                 } else {
+                    val errorText = when (pairingError) {
+                        PairingError.Denied -> stringResource(R.string.err_denied)
+                        PairingError.NetworkError -> stringResource(R.string.err_network)
+                        is PairingError.Unknown -> stringResource(R.string.err_fallback, pairingError.reason)
+                    }
                     Text(
-                        text = pairingError,
+                        text = errorText,
                         color = Color(0xFFEF5350),
                         style = MaterialTheme.typography.bodyMedium
                     )
@@ -52,7 +57,7 @@ fun PairingWaitingScreen(
         confirmButton = {},
         dismissButton = {
             TextButton(onClick = onCancel) {
-                Text("取消")
+                Text(stringResource(R.string.dialog_cancel))
             }
         },
     )

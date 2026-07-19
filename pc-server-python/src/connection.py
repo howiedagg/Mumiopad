@@ -8,6 +8,7 @@ import ctypes
 from websockets.server import serve
 from src.config import load_config, add_device_token, remove_device_token, IS_WINDOWS
 from src.controller import apply_move, apply_click, apply_scroll, apply_zoom, apply_text, apply_keypress, apply_gesture
+from src.locale_manager import _
 
 HOST = "0.0.0.0"
 PORT = 8765
@@ -22,10 +23,11 @@ class ConnectionManager:
 
     def show_pairing_dialog_windows(self, device_name: str) -> bool:
         if IS_WINDOWS:
+            # 使用對應語系顯示
             result = ctypes.windll.user32.MessageBoxW(
                 0, 
-                f"裝置「{device_name}」請求配對並控制此電腦。\n\n是否允許配對？", 
-                "Mumiopad 配對請求", 
+                _("pair_request_msg").format(device_name), 
+                _("pair_request_title"), 
                 0x00000004 | 0x00000020 | 0x00040000
             )
             return result == 6  # IDYES = 6

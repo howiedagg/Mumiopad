@@ -13,57 +13,78 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import com.example.vrtouchpad.R
 
 @Composable
 fun SettingsDialog(
     mouseSpeed: Float,
     scrollSpeed: Float,
-    reverseScroll: Boolean, // 【新增】
+    reverseScroll: Boolean,
     onMouseSpeedChange: (Float) -> Unit,
     onScrollSpeedChange: (Float) -> Unit,
-    onReverseScrollChange: (Boolean) -> Unit, // 【新增】
+    onReverseScrollChange: (Boolean) -> Unit,
     onDismiss: () -> Unit,
 ) {
+    // 使用本地暫存狀態。在拖動滑桿時 UI 會維持極度流暢，按下完成時才一次性寫入儲存空間。
+    var localMouseSpeed by remember { mutableStateOf(mouseSpeed) }
+    var localScrollSpeed by remember { mutableStateOf(scrollSpeed) }
+    var localReverseScroll by remember { mutableStateOf(reverseScroll) }
+
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("觸控板設定") },
+        title = { Text(stringResource(R.string.settings_title)) },
         text = {
             Column {
-                Text("滑鼠移動速度: ${"%.1f".format(mouseSpeed)}x")
+                // 自動將 localMouseSpeed 帶入 strings.xml 中的 %1$.1f 格式化
+                Text(stringResource(R.string.settings_mouse_speed, localMouseSpeed))
                 Slider(
-                    value = mouseSpeed,
-                    onValueChange = onMouseSpeedChange,
+                    value = localMouseSpeed,
+                    onValueChange = { localMouseSpeed = it },
                     valueRange = 0.3f..3f,
                 )
                 Spacer(Modifier.height(8.dp))
 
-                Text("雙指滾動速度: ${"%.1f".format(scrollSpeed)}x")
+                Text(stringResource(R.string.settings_scroll_speed, localScrollSpeed))
                 Slider(
-                    value = scrollSpeed,
-                    onValueChange = onScrollSpeedChange,
+                    value = localScrollSpeed,
+                    onValueChange = { localScrollSpeed = it },
                     valueRange = 0.3f..3f,
                 )
                 Spacer(Modifier.height(16.dp))
 
-                // 【新增】：反向滾動開關
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("反向滾動 (自然滾動)", style = MaterialTheme.typography.bodyMedium)
+                    Text(stringResource(R.string.settings_reverse_scroll), style = MaterialTheme.typography.bodyMedium)
                     Switch(
-                        checked = reverseScroll,
-                        onCheckedChange = onReverseScrollChange
+                        checked = localReverseScroll,
+                        onCheckedChange = { localReverseScroll = it }
                     )
                 }
             }
         },
         confirmButton = {
-            TextButton(onClick = onDismiss) { Text("完成") }
+            TextButton(
+                onClick = {
+                    // 按下完成時才寫入，確保不會因為频繁 IO 操作導致拖曳滑桿時卡頓
+                    onMouseSpeedChange(localMouseSpeed)
+                    onScrollSpeedChange(localScrollSpeed)
+                    onReverseScrollChange(localReverseScroll)
+                    onDismiss()
+                }
+            ) {
+                Text(stringResource(R.string.settings_done))
+            }
         },
     )
 }

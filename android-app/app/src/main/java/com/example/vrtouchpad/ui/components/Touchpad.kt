@@ -1,5 +1,3 @@
-// D:/howie/Documents/vr-touchpad-app/vr-touchpad-app/android-app/app/src/main/java/com/example/vrtouchpad/ui/components/Touchpad.kt
-
 package com.example.vrtouchpad.ui.components
 
 import android.os.Build
@@ -14,6 +12,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.res.stringResource
+import com.example.vrtouchpad.R
 import com.example.vrtouchpad.engine.GestureEngine
 import com.example.vrtouchpad.engine.LocalFeedbackType
 import com.example.vrtouchpad.engine.TouchOutEvent
@@ -27,7 +27,7 @@ fun Touchpad(
     scrollSpeed: Float,
     reverseScroll: Boolean,
     scope: CoroutineScope,
-    isKeyboardActive: Boolean, // 【新增】：外部傳入的鍵盤當前狀態
+    isKeyboardActive: Boolean,
     onOutEvent: (TouchOutEvent) -> Unit,
     onToggleKeyboard: () -> Unit,
 ) {
@@ -37,7 +37,7 @@ fun Touchpad(
     val currentMouseSpeed by rememberUpdatedState(mouseSpeed)
     val currentScrollSpeed by rememberUpdatedState(scrollSpeed)
     val currentReverseScroll by rememberUpdatedState(reverseScroll)
-    val currentIsKeyboardActive by rememberUpdatedState(isKeyboardActive) // 捕捉最新鍵盤展開狀態
+    val currentIsKeyboardActive by rememberUpdatedState(isKeyboardActive)
 
     val currentOnOutEvent by rememberUpdatedState(onOutEvent)
     val currentOnToggleKeyboard by rememberUpdatedState(onToggleKeyboard)
@@ -84,7 +84,7 @@ fun Touchpad(
                     }
                     LocalFeedbackType.ZOOM_TICK -> {
                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                            HapticFeedbackConstants.SEGMENT_TICK // 高階單次刻度，用於縮放微調
+                            HapticFeedbackConstants.SEGMENT_TICK
                         } else {
                             HapticFeedbackConstants.KEYBOARD_PRESS
                         }
@@ -93,7 +93,7 @@ fun Touchpad(
                 view.performHapticFeedback(constant)
             },
             onToggleKeyboard = { currentOnToggleKeyboard() },
-            isKeyboardActive = { currentIsKeyboardActive } // 【新增】：將最新狀態傳入引擎
+            isKeyboardActive = { currentIsKeyboardActive }
         )
     }
 
@@ -133,7 +133,7 @@ fun Touchpad(
             },
     ) {
         Text(
-            if (enabled) "觸控板區域" else "尚未連線",
+            if (enabled) stringResource(R.string.touchpad_area) else stringResource(R.string.touchpad_not_connected),
             color = Color.Gray,
             modifier = Modifier.align(Alignment.Center),
         )

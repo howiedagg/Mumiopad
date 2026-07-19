@@ -24,7 +24,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import com.example.vrtouchpad.R
 import kotlinx.coroutines.delay
 
 @Composable
@@ -61,7 +63,7 @@ fun DiscoveredDeviceSnackbar(
                         .padding(horizontal = 14.dp, vertical = 10.dp),
                 ) {
                     Text(
-                        text = "發現 $deviceCount 台新電腦，點擊配對",
+                        text = stringResource(R.string.snackbar_new_devices, deviceCount),
                         style = MaterialTheme.typography.bodySmall,
                         color = Color.White,
                     )
