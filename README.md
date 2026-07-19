@@ -39,9 +39,9 @@ Please visit 👉 **[the Mumiopad Latest Downloads page](https://github.com/howi
 | | Vertical Slide | Scroll |
 | | Horizontal Swipe | Browser Back / Forward |
 | | Pinch Zoom | Windows Magnifier Zoom |
-| **3 Fingers** | Tap | Task View (Win + Tab) |
-| | Swipe Down | Show Desktop / Hide Keyboard |
-| | Swipe Up | Show Keyboard |
+| **3 Fingers**| Tap Once | Task View (`Win + Tab`) |
+| | Slide Down/Up | **Minimize All / Restore Windows** (`Win + D`) |
+| | Slide Left / Right | **Toggle Virtual Keyboard** |
 | **4 Fingers** | Tap | Mouse Middle Click |
 | **Hardware Buttons** | Volume Keys | PC System Volume Control |
 

@@ -33,7 +33,7 @@ class GestureEngine(
     private val emit: (TouchOutEvent) -> Unit,
     private val onLocalFeedback: (LocalFeedbackType) -> Unit = {},
     private val onToggleKeyboard: () -> Unit = {},
-    private val isKeyboardActive: () -> Boolean = { false } // 【新增】：判斷鍵盤狀態的回呼
+    private val isKeyboardActive: () -> Boolean = { false } // 判斷鍵盤狀態的回呼
 ) {
     private val slopPx = 8f * density
     private val stillPx = 10f * density
@@ -93,6 +93,8 @@ class GestureEngine(
 
     private var horizontalSwipeTriggered = false
 
+    // 【新增】：三指 X 軸起點，用來進行三指水平手勢判斷
+    private var threeFingerStartX = 0f
     private var threeFingerStartY = 0f
     private var threeFingerSwiped = false
 
@@ -168,6 +170,8 @@ class GestureEngine(
                 val p2 = pointers.values.elementAtOrNull(1)
                 val p3 = pointers.values.elementAtOrNull(2)
                 if (p1 != null && p2 != null && p3 != null) {
+                    // 【修正】：同步記錄三指的 X 與 Y 平均起點
+                    threeFingerStartX = (p1.x + p2.x + p3.x) / 3f
                     threeFingerStartY = (p1.y + p2.y + p3.y) / 3f
                 }
                 threeFingerSwiped = false
@@ -373,31 +377,35 @@ class GestureEngine(
                 }
             }
 
+            // 【重構】：方案 A。垂直方向操控 Win 視窗，水平方向控鍵盤（左右拉推手感）
             Mode.THREE_FINGER -> {
                 if (!threeFingerSwiped) {
                     val p1 = pointers.values.elementAtOrNull(0)
                     val p2 = pointers.values.elementAtOrNull(1)
                     val p3 = pointers.values.elementAtOrNull(2)
                     if (p1 != null && p2 != null && p3 != null) {
+                        val currentAvgX = (p1.x + p2.x + p3.x) / 3f
                         val currentAvgY = (p1.y + p2.y + p3.y) / 3f
+
+                        val deltaX = currentAvgX - threeFingerStartX
                         val deltaY = currentAvgY - threeFingerStartY
 
-                        if (deltaY >= swipeThresholdPx) {
+                        // 比對 X 軸與 Y 軸誰先跨過閥值
+                        if (abs(deltaY) >= swipeThresholdPx && abs(deltaY) > abs(deltaX)) {
                             threeFingerSwiped = true
-                            // 【整合優化】：鍵盤已叫出時，三指向下改為「收合鍵盤」；鍵盤未叫出時，維持原本三指向下（顯示桌面）
-                            if (isKeyboardActive()) {
-                                onLocalFeedback(LocalFeedbackType.TICK)
-                                onToggleKeyboard() // 執行收合
-                            } else {
+                            onLocalFeedback(LocalFeedbackType.TICK)
+                            if (deltaY >= 0) {
+                                // 垂直下滑：顯示桌面 / 最小化所有視窗 (Win + D)
                                 emit(TouchOutEvent.Gesture("desktop", "down"))
+                            } else {
+                                // 垂直上滑：還原所有視窗 (再次 Win + D)
+                                emit(TouchOutEvent.Gesture("desktop", "up"))
                             }
-                        } else if (deltaY <= -swipeThresholdPx) {
+                        } else if (abs(deltaX) >= swipeThresholdPx && abs(deltaX) > abs(deltaY)) {
                             threeFingerSwiped = true
-                            // 【整合優化】：三指上滑。只有在鍵盤未開啟時，才發送「開啟鍵盤」要求，防止重複觸發
-                            if (!isKeyboardActive()) {
-                                onLocalFeedback(LocalFeedbackType.TICK)
-                                onToggleKeyboard() // 執行展開
-                            }
+
+                            onLocalFeedback(LocalFeedbackType.TICK)
+                            onToggleKeyboard()
                         }
                     }
                 }
@@ -535,6 +543,7 @@ class GestureEngine(
         lastHapticTwoFingerDist = 0f
         rawHapticAccumulator = 0f
         horizontalSwipeTriggered = false
+        threeFingerStartX = 0f
         threeFingerStartY = 0f
         threeFingerSwiped = false
     }
