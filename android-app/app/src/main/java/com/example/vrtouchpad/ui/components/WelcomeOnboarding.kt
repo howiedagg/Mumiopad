@@ -45,9 +45,24 @@ fun WelcomeOnboarding(
     onMakeBtDiscoverable: () -> Unit,
     btBondedDevices: List<BluetoothDevice>,
     btConnState: ConnState,
-    onConnectBt: (BluetoothDevice) -> Unit
+    onConnectBt: (BluetoothDevice) -> Unit,
+    // 💡 修正 1：傳入首次開卡標記與當前模式
+    isFirstLaunch: Boolean,
+    connectionMode: ConnectionMode
 ) {
-    var selectedPath by remember { mutableStateOf<ConnectionMode?>(null) }
+    // 💡 修正 2：初始化邏輯。若非首次開卡，直接切入對應的引導頁，徹底消滅切換時的中斷感！
+    var selectedPath by remember {
+        mutableStateOf<ConnectionMode?>(
+            if (isFirstLaunch) null else connectionMode
+        )
+    }
+
+    // 💡 修正 3：當在 Dialog 中點擊切換模式時，同步更新 Onboarding 引導頁路由
+    LaunchedEffect(connectionMode) {
+        if (!isFirstLaunch) {
+            selectedPath = connectionMode
+        }
+    }
 
     Box(
         modifier = modifier

@@ -233,7 +233,6 @@ fun AppRoot(viewModel: TouchpadViewModel) {
                     pairingNavState = pairingNavState,
                     onStartPairing = { server -> viewModel.triggerPairing(server) },
                     onCancelPairing = { viewModel.cancelPairing() },
-                    // 💡 新增：將雙軌 Onboarding 與 ViewModel 及系統藍牙進行解耦對接
                     onModeChange = { mode -> viewModel.setConnectionMode(mode) },
                     onMakeBtDiscoverable = {
                         val discoverableIntent = android.content.Intent(android.bluetooth.BluetoothAdapter.ACTION_REQUEST_DISCOVERABLE).apply {
@@ -243,7 +242,10 @@ fun AppRoot(viewModel: TouchpadViewModel) {
                     },
                     btBondedDevices = btBondedDevices,
                     btConnState = connState,
-                    onConnectBt = { device -> viewModel.connectBluetooth(device) }
+                    onConnectBt = { device -> viewModel.connectBluetooth(device) },
+                    // 💡 修正：安全橋接 ViewModel 的首次開卡與狀態同步參數
+                    isFirstLaunch = viewModel.isFirstLaunch,
+                    connectionMode = connectionMode
                 )
             } else {
                 Touchpad(

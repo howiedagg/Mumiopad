@@ -1,3 +1,5 @@
+// D:/howie/Documents/vr-touchpad-app/vr-touchpad-app/android-app/app/src/main/java/com/example/vrtouchpad/network/BluetoothHidTouchpadClient.kt
+
 package com.example.vrtouchpad.network
 
 import android.annotation.SuppressLint
@@ -8,9 +10,7 @@ import android.bluetooth.BluetoothHidDeviceAppQosSettings
 import android.bluetooth.BluetoothHidDeviceAppSdpSettings
 import android.bluetooth.BluetoothProfile
 import android.content.Context
-import android.os.Build
 import android.util.Log
-import androidx.annotation.RequiresApi
 import com.example.vrtouchpad.engine.TouchOutEvent
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -22,93 +22,36 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import java.util.concurrent.Executors
 
-@RequiresApi(Build.VERSION_CODES.P)
 class BluetoothHidTouchpadClient(private val context: Context) : ConnectionClient {
 
     private val mBtAdapter: BluetoothAdapter? = BluetoothAdapter.getDefaultAdapter()
     private var mHidDevice: BluetoothHidDevice? = null
     private var mHostDevice: BluetoothDevice? = null
 
+    val connectedDevice: BluetoothDevice? get() = mHostDevice
+
     private val _connState = MutableStateFlow(ConnState.DISCONNECTED)
     override val connState: StateFlow<ConnState> = _connState
+
+    private val _isAppRegistered = MutableStateFlow(false)
+    val isAppRegistered: StateFlow<Boolean> = _isAppRegistered
 
     private var mButtonState: Byte = 0x00
     private val clientScope = CoroutineScope(Dispatchers.Default + Job())
 
-    // 💡 藍牙 Combo 描述符：同時宣告滑鼠 (ID 1)、鍵盤 (ID 2)、消費性控制器/音量 (ID 3)
     private val HID_DESCRIPTOR_COMBO = intArrayOf(
         // === 1. 標準滑鼠 (Report ID 1) ===
-        0x05, 0x01,         // Usage Page (Generic Desktop)
-        0x09, 0x02,         // Usage (Mouse)
-        0xa1, 0x01,         // Collection (Application)
-        0x85, 0x01,         //   Report ID (1)
-        0x09, 0x01,         //   Usage (Pointer)
-        0xa1, 0x00,         //   Collection (Physical)
-        0x05, 0x09,         //     Usage Page (Buttons)
-        0x19, 0x01,         //     Usage Minimum (1)
-        0x29, 0x03,         //     Usage Maximum (3)
-        0x15, 0x00,         //     Logical Minimum (0)
-        0x25, 0x01,         //     Logical Maximum (1)
-        0x75, 0x01,         //     Report Size (1)
-        0x95, 0x03,         //     Report Count (3)
-        0x81, 0x02,         //     Input (Data, Variable, Absolute)
-        0x75, 0x05,         //     Report Size (5)
-        0x95, 0x01,         //     Report Count (1)
-        0x81, 0x01,         //     Input (Constant) ; 5-bit padding
-        0x05, 0x01,         //     Usage Page (Generic Desktop)
-        0x09, 0x30,         //     Usage (X)
-        0x09, 0x31,         //     Usage (Y)
-        0x09, 0x38,         //     Usage (Wheel)
-        0x15, 0x81,         //     Logical Minimum (-127)
-        0x25, 0x7f,         //     Logical Maximum (127)
-        0x75, 0x08,         //     Report Size (8)
-        0x95, 0x03,         //     Report Count (3)
-        0x81, 0x06,         //     Input (Data, Variable, Relative)
-        0xc0,               //   End Collection
-        0xc0,               // End Collection
-
+        0x05, 0x01, 0x09, 0x02, 0xa1, 0x01, 0x85, 0x01, 0x09, 0x01, 0xa1, 0x00, 0x05, 0x09, 0x19, 0x01,
+        0x29, 0x03, 0x15, 0x00, 0x25, 0x01, 0x75, 0x01, 0x95, 0x03, 0x81, 0x02, 0x75, 0x05, 0x95, 0x01,
+        0x81, 0x01, 0x05, 0x01, 0x09, 0x30, 0x09, 0x31, 0x09, 0x38, 0x15, 0x81, 0x25, 0x7f, 0x75, 0x08,
+        0x95, 0x03, 0x81, 0x06, 0xc0, 0xc0,
         // === 2. 標準鍵盤 (Report ID 2) ===
-        0x05, 0x01,         // Usage Page (Generic Desktop)
-        0x09, 0x06,         // Usage (Keyboard)
-        0xa1, 0x01,         // Collection (Application)
-        0x85, 0x02,         //   Report ID (2)
-        0x05, 0x07,         //   Usage Page (Keyboard)
-        0x19, 0xe0,         //   Usage Minimum (Keyboard LeftControl)
-        0x29, 0xe7,         //   Usage Maximum (Keyboard Right GUI)
-        0x15, 0x00,         //   Logical Minimum (0)
-        0x25, 0x01,         //   Logical Maximum (1)
-        0x75, 0x01,         //   Report Size (1)
-        0x95, 0x08,         //   Report Count (8)
-        0x81, 0x02,         //   Input (Data, Variable, Absolute) ; Modifier keys byte
-        0x95, 0x01,         //   Report Count (1)
-        0x75, 0x08,         //   Report Size (8)
-        0x81, 0x01,         //   Input (Constant) ; Reserved byte
-        0x95, 0x06,         //   Report Count (6)
-        0x75, 0x08,         //   Report Size (8)
-        0x15, 0x00,         //   Logical Minimum (0)
-        0x25, 0x65,         //   Logical Maximum (101)
-        0x19, 0x00,         //   Usage Minimum (0)
-        0x29, 0x65,         //   Usage Maximum (101)
-        0x81, 0x00,         //   Input (Data, Array) ; 6 key rolls
-        0xc0,               // End Collection
-
-        // === 3. 消費性控制器/音量控制 (Report ID 3) ===
-        0x05, 0x0c,         // Usage Page (Consumer)
-        0x09, 0x01,         // Usage (Consumer Control)
-        0xa1, 0x01,         // Collection (Application)
-        0x85, 0x03,         //   Report ID (3)
-        0x15, 0x00,         //   Logical Minimum (0)
-        0x25, 0x01,         //   Logical Maximum (1)
-        0x75, 0x01,         //   Report Size (1)
-        0x95, 0x03,         //   Report Count (3)
-        0x09, 0xe9,         //   Usage (Volume Increment)
-        0x09, 0xea,         //   Usage (Volume Decrement)
-        0x09, 0xe2,         //   Usage (Mute)
-        0x81, 0x02,         //   Input (Data, Variable, Absolute)
-        0x95, 0x01,         //   Report Count (1)
-        0x75, 0x05,         //   Report Size (5)
-        0x81, 0x01,         //   Input (Constant) ; Padding
-        0xc0                // End Collection
+        0x05, 0x01, 0x09, 0x06, 0xa1, 0x01, 0x85, 0x02, 0x05, 0x07, 0x19, 0xe0, 0x29, 0xe7, 0x15, 0x00,
+        0x25, 0x01, 0x75, 0x01, 0x95, 0x08, 0x81, 0x02, 0x95, 0x01, 0x75, 0x08, 0x81, 0x01, 0x95, 0x06,
+        0x75, 0x08, 0x15, 0x00, 0x25, 0x65, 0x19, 0x00, 0x29, 0x65, 0x81, 0x00, 0xc0,
+        // === 3. 多媒體消費性按鍵 (Report ID 3) ===
+        0x05, 0x0c, 0x09, 0x01, 0xa1, 0x01, 0x85, 0x03, 0x15, 0x00, 0x25, 0x01, 0x75, 0x01, 0x95, 0x03,
+        0x09, 0xe9, 0x09, 0xea, 0x09, 0xe2, 0x81, 0x02, 0x95, 0x01, 0x75, 0x05, 0x81, 0x01, 0xc0
     ).map { it.toByte() }.toByteArray()
 
     private val mQosSettings = BluetoothHidDeviceAppQosSettings(
@@ -121,7 +64,7 @@ class BluetoothHidTouchpadClient(private val context: Context) : ConnectionClien
         override fun onServiceConnected(profile: Int, proxy: BluetoothProfile?) {
             if (profile == BluetoothProfile.HID_DEVICE && proxy is BluetoothHidDevice) {
                 mHidDevice = proxy
-                runCatching { proxy.unregisterApp() }
+
                 registerHidApp()
             }
         }
@@ -129,6 +72,7 @@ class BluetoothHidTouchpadClient(private val context: Context) : ConnectionClien
         override fun onServiceDisconnected(profile: Int) {
             if (profile == BluetoothProfile.HID_DEVICE) {
                 mHidDevice = null
+                _isAppRegistered.value = false
                 _connState.value = ConnState.DISCONNECTED
             }
         }
@@ -137,6 +81,8 @@ class BluetoothHidTouchpadClient(private val context: Context) : ConnectionClien
     private val mCallback = object : BluetoothHidDevice.Callback() {
         override fun onAppStatusChanged(pluggedDevice: BluetoothDevice?, registered: Boolean) {
             super.onAppStatusChanged(pluggedDevice, registered)
+            Log.d("BT_HID", "onAppStatusChanged: 註冊狀態 = $registered")
+            _isAppRegistered.value = registered
             if (registered) {
                 checkCurrentConnections()
             }
@@ -162,7 +108,19 @@ class BluetoothHidTouchpadClient(private val context: Context) : ConnectionClien
     }
 
     init {
-        mBtAdapter?.getProfileProxy(context, mProfileListener, BluetoothProfile.HID_DEVICE)
+        // 💡 首次啟動，開機綁定代理
+        open()
+    }
+
+    // 💡 新增 1：開啟/重新開啟藍牙服務代理與註冊流程
+    fun open() {
+        if (mHidDevice == null) {
+            _isAppRegistered.value = false
+            mBtAdapter?.getProfileProxy(context, mProfileListener, BluetoothProfile.HID_DEVICE)
+        } else {
+            // 如果 Proxy 還在，直接嘗試重新註冊 App，避免背景切回後 SDP 註冊丟失
+            registerHidApp()
+        }
     }
 
     @SuppressLint("MissingPermission")
@@ -171,7 +129,7 @@ class BluetoothHidTouchpadClient(private val context: Context) : ConnectionClien
             "Mumiopad Combo",
             "Mumiopad Virtual Input Device",
             "Mumiopad",
-            BluetoothHidDevice.SUBCLASS1_COMBO, // 💡 宣告為鍵盤滑鼠複合式子類 (Combo)
+            BluetoothHidDevice.SUBCLASS1_COMBO,
             HID_DESCRIPTOR_COMBO
         )
         mHidDevice?.registerApp(
@@ -189,6 +147,7 @@ class BluetoothHidTouchpadClient(private val context: Context) : ConnectionClien
         if (connectedDevices.isNotEmpty()) {
             mHostDevice = connectedDevices[0]
             _connState.value = ConnState.CONNECTED
+            Log.d("BT_HID", "同步：檢測到已建立的藍牙連線: ${mHostDevice?.address}")
         }
     }
 
@@ -272,9 +231,9 @@ class BluetoothHidTouchpadClient(private val context: Context) : ConnectionClien
                 if (keycode != 0.toByte()) {
                     val modifiers: Byte = if (isShift) 0x02 else 0x00
                     sendKeyboardReport(modifiers, keycode)
-                    delay(15)
-                    sendKeyboardReport(0, 0)
-                    delay(15)
+                    delay(10)
+                    sendKeyboardReport(0x00, 0x00)
+                    delay(10)
                 }
             }
         }
@@ -284,14 +243,14 @@ class BluetoothHidTouchpadClient(private val context: Context) : ConnectionClien
         clientScope.launch {
             when (key) {
                 "BACKSPACE" -> {
-                    sendKeyboardReport(0, 0x2A.toByte())
-                    delay(15)
-                    sendKeyboardReport(0, 0)
+                    sendKeyboardReport(0x00, 0x2A.toByte())
+                    delay(10)
+                    sendKeyboardReport(0x00, 0x00)
                 }
                 "ENTER" -> {
-                    sendKeyboardReport(0, 0x28.toByte())
-                    delay(15)
-                    sendKeyboardReport(0, 0)
+                    sendKeyboardReport(0x00, 0x28.toByte())
+                    delay(10)
+                    sendKeyboardReport(0x00, 0x00)
                 }
                 "VOLUME_UP" -> {
                     sendConsumerReport(0x01)
@@ -318,12 +277,21 @@ class BluetoothHidTouchpadClient(private val context: Context) : ConnectionClien
         }
     }
 
+    // 💡 修正 2：切出背景或手動斷連時，安全關閉並釋放代理服務，符合系統背景規範
     @SuppressLint("MissingPermission")
     override fun close() {
+        disconnectHost()
         runCatching { mHidDevice?.unregisterApp() }
         mBtAdapter?.closeProfileProxy(BluetoothProfile.HID_DEVICE, mHidDevice)
+        mHidDevice = null
+        _isAppRegistered.value = false
         _connState.value = ConnState.DISCONNECTED
         clientScope.coroutineContext[Job]?.cancelChildren()
+    }
+
+    @SuppressLint("MissingPermission")
+    fun destroy() {
+        close()
     }
 
     @SuppressLint("MissingPermission")
@@ -335,9 +303,69 @@ class BluetoothHidTouchpadClient(private val context: Context) : ConnectionClien
     fun connect(device: BluetoothDevice) {
         val hid = mHidDevice
         if (hid != null) {
-            mHostDevice = device
-            _connState.value = ConnState.CONNECTING
-            hid.connect(device)
+            // 1. 狀態同步防線：若系統底層已連線，直接同步
+            val connectedDevices = hid.getDevicesMatchingConnectionStates(
+                intArrayOf(BluetoothProfile.STATE_CONNECTED)
+            )
+            if (connectedDevices.any { it.address == device.address }) {
+                Log.d("BT_HID", "同步：該裝置在系統層面已是連線狀態，直接同步，無需重連")
+                mHostDevice = device
+                _connState.value = ConnState.CONNECTED
+                return
+            }
+
+            // 2. 啟動高頻探針自適應重試線
+            clientScope.launch {
+                var success = false
+                var attempts = 0
+                val maxAttempts = 3
+
+                // 只要當前狀態不是 CONNECTED，且重試次數未滿，就繼續重試
+                while (_connState.value != ConnState.CONNECTED && attempts < maxAttempts) {
+                    // 安全退場閥
+                    if (attempts > 0 && mHostDevice == null) {
+                        Log.d("BT_HID", "使用者已取消連線，中止重試")
+                        break
+                    }
+
+                    attempts++
+                    mHostDevice = device
+                    _connState.value = ConnState.CONNECTING
+
+                    success = hid.connect(device)
+                    Log.d("BT_HID", "嘗試主動連線至 ${device.name ?: "Device"} (第 $attempts 次嘗試): $success")
+
+                    if (success) {
+                        // 💡 修正核心：改用 100ms 高頻極速探針。最長等待 4 秒。
+                        // 只要系統一回報已連線，在 0.1 秒內探針就會瞬間捕捉到，並「立刻結束重試」！
+                        // 這能徹底杜絕因系統廣播排隊延遲而引發的重複重連 Bug，且提早連上會秒斷結束，不浪費一絲電量！
+                        var waitTime = 0
+                        while (_connState.value != ConnState.CONNECTED && waitTime < 4000) {
+                            delay(100)
+                            waitTime += 100
+                        }
+
+                        if (_connState.value == ConnState.CONNECTED) {
+                            Log.d("BT_HID", "藍牙實體連線已建立，成功中止重試線")
+                            break
+                        }
+                    }
+
+                    if (_connState.value != ConnState.CONNECTED && attempts < maxAttempts) {
+                        // 失敗後，等待 1.5 秒讓晶片稍微緩衝，再次發起重試
+                        delay(1500)
+                    }
+                }
+
+                // 💡 3. 自適應超時判定
+                if (_connState.value != ConnState.CONNECTED && mHostDevice != null) {
+                    Log.w("BT_HID", "藍牙自適應重試結束，所有嘗試均失敗，重置狀態")
+                    _connState.value = ConnState.DISCONNECTED
+                    mHostDevice = null
+                }
+            }
+        } else {
+            Log.w("BT_HID", "無法連線：HID Device 代理尚未就緒")
         }
     }
 

@@ -1,3 +1,5 @@
+// D:/howie/Documents/vr-touchpad-app/vr-touchpad-app/android-app/app/src/main/java/com/example/vrtouchpad/data/SettingsStore.kt
+
 package com.example.vrtouchpad.data
 
 import android.content.Context
@@ -18,6 +20,10 @@ class SettingsStore(context: Context) {
         set(value) = prefs.edit().putBoolean("reverse_scroll", value).apply()
 
     var connectionMode: String
-        get() = prefs.getString("connection_mode", "WIFI") ?: "WIFI"
+        get() = prefs.getString("connection_mode", "UNSET") ?: "UNSET"
         set(value) = prefs.edit().putString("connection_mode", value).apply()
+
+    var lastConnectedBtAddress: String?
+        get() = prefs.getString("last_connected_bt_address", null)
+        set(value) = prefs.edit().putString("last_connected_bt_address", value).apply()
 }

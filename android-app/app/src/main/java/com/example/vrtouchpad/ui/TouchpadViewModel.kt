@@ -1,5 +1,8 @@
+// D:/howie/Documents/vr-touchpad-app/vr-touchpad-app/android-app/app/src/main/java/com/example/vrtouchpad/ui/TouchpadViewModel.kt
+
 package com.example.vrtouchpad.ui
 
+import android.annotation.SuppressLint // 💡 導入 SuppressLint，確保權限檢查不干擾編譯
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -24,6 +27,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 
 enum class ConnectionMode { WIFI, BLUETOOTH }
 
@@ -72,14 +76,19 @@ class TouchpadViewModel(
     private val _userWantsOffline = MutableStateFlow(false)
     val userWantsOffline: StateFlow<Boolean> = _userWantsOffline
 
+    // 💡 初始化時，如果設定檔為 UNSET（首次開卡），內部預設以 WIFI 模式處理，但保留 UNSET 標記供 Onboarding 辨識
     private val _connectionMode = MutableStateFlow(
         try {
-            ConnectionMode.valueOf(settingsStore.connectionMode)
+            val modeStr = settingsStore.connectionMode
+            if (modeStr == "UNSET") ConnectionMode.WIFI else ConnectionMode.valueOf(modeStr)
         } catch (e: Exception) {
             ConnectionMode.WIFI
         }
     )
     val connectionMode: StateFlow<ConnectionMode> = _connectionMode
+
+    // 💡 向外暴露是否為「從未選擇過模式的首次開卡」狀態
+    val isFirstLaunch: Boolean get() = settingsStore.connectionMode == "UNSET"
 
     private val _btBondedDevices = MutableStateFlow<List<android.bluetooth.BluetoothDevice>>(emptyList())
     val btBondedDevices: StateFlow<List<android.bluetooth.BluetoothDevice>> = _btBondedDevices
@@ -184,7 +193,6 @@ class TouchpadViewModel(
         _savedServers
     ) { mode, orthoPhase, wsState, savedList ->
         if (mode == ConnectionMode.BLUETOOTH) {
-            // 💡 修正：直接返回 null，最外層 UI (StatusBar) 偵測到 null，會自動回退顯示 localized 的「已連線/Connected」
             null
         } else {
             if (wsState == ConnState.CONNECTED) {
@@ -211,14 +219,21 @@ class TouchpadViewModel(
     init {
         refreshServerLists()
 
-        if (_connectionMode.value == ConnectionMode.WIFI) {
-            if (pairingManager.getSavedServers().isEmpty()) {
-                startPairingScan()
+        if (settingsStore.connectionMode != "UNSET") {
+            if (_connectionMode.value == ConnectionMode.WIFI) {
+                if (pairingManager.getSavedServers().isEmpty()) {
+                    startPairingScan()
+                } else {
+                    orchestrator.start()
+                }
             } else {
-                orchestrator.start()
+                refreshBtDevices()
+                // 💡 修正 1：首次啟動。如果藍牙服務在此時已經提前註冊完成，主動觸發一次背景重連
+                btClient.open()
+                if (btClient.isAppRegistered.value) {
+                    attemptBluetoothAutoConnect()
+                }
             }
-        } else {
-            refreshBtDevices()
         }
 
         viewModelScope.launch {
@@ -230,6 +245,28 @@ class TouchpadViewModel(
                     }
                 } else {
                     wifiPerformanceManager.release()
+                }
+            }
+        }
+
+        viewModelScope.launch {
+            btClient.connState.collect { state ->
+                if (_connectionMode.value == ConnectionMode.BLUETOOTH && state == ConnState.CONNECTED) {
+                    btClient.connectedDevice?.address?.let { address ->
+                        Log.d("BT_AUTO_CONNECT", "藍牙連線成功，記錄歷史 MAC: $address")
+                        settingsStore.lastConnectedBtAddress = address
+                    }
+                }
+            }
+        }
+
+        // 💡 修正 2：反應式重連安全防線。當藍牙狀態由 false 轉為 true 時，在 500ms 緩衝後發起連線
+        viewModelScope.launch {
+            btClient.isAppRegistered.collect { registered ->
+                if (registered && _connectionMode.value == ConnectionMode.BLUETOOTH) {
+                    Log.d("BT_AUTO_CONNECT", "檢測到藍牙服務註冊狀態變更，延遲 500ms 後重連")
+                    delay(500)
+                    attemptBluetoothAutoConnect()
                 }
             }
         }
@@ -295,11 +332,17 @@ class TouchpadViewModel(
             if (_connectionMode.value == ConnectionMode.WIFI && pairingManager.getSavedServers().isNotEmpty()) {
                 orchestrator.start()
             } else if (_connectionMode.value == ConnectionMode.BLUETOOTH) {
+                btClient.open()
                 refreshBtDevices()
+                // 💡 修正 3：切回前景主動觸發。如果藍牙代理已是註冊狀態（沒有發生數值變更），主動調用重連
+                if (btClient.isAppRegistered.value) {
+                    attemptBluetoothAutoConnect()
+                }
             }
         } else {
             orchestrator.stop()
             wsClient.close()
+            // 符合 Android 背景安全規範。切出背景時，確實調用 close() 釋放藍牙代理與斷連，防止系統暫存死鎖
             btClient.close()
             wifiPerformanceManager.release()
         }
@@ -313,24 +356,17 @@ class TouchpadViewModel(
         }
     }
 
-    fun sendText(text: String) {
-        if (_connectionMode.value == ConnectionMode.BLUETOOTH) {
-            btClient.sendText(text)
-        } else {
-            wsClient.sendText(text)
-        }
-    }
-
-    fun sendKeypress(key: String) {
-        if (_connectionMode.value == ConnectionMode.BLUETOOTH) {
-            btClient.sendKeypress(key)
-        } else {
-            wsClient.sendKeypress(key)
-        }
-    }
-
     fun setConnectionMode(mode: ConnectionMode) {
-        if (_connectionMode.value == mode) return
+        if (_connectionMode.value == mode) {
+            // 當前模式已是 WIFI，如果使用者在 Onboarding 介面點選（即歷史名單為空且當前未在掃描），
+            // 主動發起一次 startPairingScan()
+            if (mode == ConnectionMode.WIFI && pairingManager.getSavedServers().isEmpty() && !_isScanning.value) {
+                Log.d("WIFI_SCAN", "初次配對點選 Wi-Fi，啟動 mDNS 搜尋...")
+                startPairingScan()
+            }
+            return
+        }
+
         _connectionMode.value = mode
         settingsStore.connectionMode = mode.name
 
@@ -338,13 +374,42 @@ class TouchpadViewModel(
             orchestrator.stop()
             wsClient.close()
             wifiPerformanceManager.release()
+            btClient.open()
             refreshBtDevices()
+            // 💡 修正 4：模式切換主動觸發。若此時藍牙已是註冊狀態，直接背景發起連線
+            if (btClient.isAppRegistered.value) {
+                attemptBluetoothAutoConnect()
+            }
         } else {
             btClient.close()
             _unpairedDiscovered.value = emptyList()
             if (pairingManager.getSavedServers().isNotEmpty()) {
                 orchestrator.start()
+            } else {
+                Log.d("WIFI_SCAN", "手動切換至 Wi-Fi 模式且無歷史紀錄，啟動 mDNS 搜尋...")
+                startPairingScan()
             }
+        }
+    }
+
+    // 💡 修正 5：防重複連線安全閥
+    @SuppressLint("MissingPermission")
+    private fun attemptBluetoothAutoConnect() {
+        // 如果當前「已經在連線中（CONNECTING）」或是「已經是連線狀態（CONNECTED）」，
+        // 則直接退出，防止多個生命週期事件在極短時間內重複發起連線，導致晶片衝突！
+        if (btClient.connState.value == ConnState.CONNECTED || btClient.connState.value == ConnState.CONNECTING) {
+            Log.d("BT_AUTO_CONNECT", "自動重連忽略：目前已連線或正在連線中")
+            return
+        }
+
+        val lastAddress = settingsStore.lastConnectedBtAddress ?: return
+        val bonded = btClient.getBondedDevices()
+        val target = bonded.find { it.address == lastAddress }
+        if (target != null) {
+            Log.d("BT_AUTO_CONNECT", "啟動背景自動連線: ${target.name ?: target.address}")
+            btClient.connect(target)
+        } else {
+            Log.d("BT_AUTO_CONNECT", "未發現歷史連線裝置或該裝置已被系統解除配對")
         }
     }
 
@@ -520,11 +585,27 @@ class TouchpadViewModel(
         }
     }
 
+    fun sendText(text: String) {
+        if (_connectionMode.value == ConnectionMode.BLUETOOTH) {
+            btClient.sendText(text)
+        } else {
+            wsClient.sendText(text)
+        }
+    }
+
+    fun sendKeypress(key: String) {
+        if (_connectionMode.value == ConnectionMode.BLUETOOTH) {
+            btClient.sendKeypress(key)
+        } else {
+            wsClient.sendKeypress(key)
+        }
+    }
+
     override fun onCleared() {
         super.onCleared()
         orchestrator.stop()
         wsClient.close()
-        btClient.close()
+        btClient.destroy()
         wifiPerformanceManager.release()
     }
 }
