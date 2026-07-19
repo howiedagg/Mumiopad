@@ -1,3 +1,5 @@
+// D:/howie/Documents/vr-touchpad-app/vr-touchpad-app/android-app/app/src/main/java/com/example/vrtouchpad/ui/dialogs/DeviceListScreen.kt
+
 package com.example.vrtouchpad.ui.dialogs
 
 import android.annotation.SuppressLint
@@ -45,7 +47,6 @@ fun DeviceListScreen(
     onStartPairing: (DiscoveredServer) -> Unit,
     onRescan: () -> Unit,
     onDismiss: () -> Unit,
-    // 💡 藍牙專用參數
     btBondedDevices: List<BluetoothDevice>,
     btConnState: com.example.vrtouchpad.network.ConnState,
     onConnectBt: (BluetoothDevice) -> Unit,
@@ -82,6 +83,7 @@ fun DeviceListScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
+                // 💡 自動套用極簡化後的「選擇裝置」標題
                 Text(stringResource(R.string.dialog_select_computer))
                 if (connectionMode == ConnectionMode.WIFI) {
                     if (isScanning) {
@@ -112,7 +114,7 @@ fun DeviceListScreen(
         text = {
             Column(modifier = Modifier.fillMaxWidth()) {
 
-                // 💡 頂部極簡雙模切換膠囊
+                // 頂部雙模切換膠囊
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -133,7 +135,7 @@ fun DeviceListScreen(
                             .padding(vertical = 8.dp),
                         contentAlignment = Alignment.Center
                     ) {
-                        Text("Wi-Fi (PC)", color = if (isWifi) Color.White else Color.Gray, style = MaterialTheme.typography.bodyMedium)
+                        Text("Wi-Fi", color = if (isWifi) Color.White else Color.Gray, style = MaterialTheme.typography.bodyMedium)
                     }
 
                     Box(
@@ -145,11 +147,12 @@ fun DeviceListScreen(
                             .padding(vertical = 8.dp),
                         contentAlignment = Alignment.Center
                     ) {
-                        Text("藍牙 (VR)", color = if (!isWifi) Color.White else Color.Gray, style = MaterialTheme.typography.bodyMedium)
+                        // 💡 修正：移除「(VR)」標籤，回歸最單純的「藍牙」
+                        Text("藍牙", color = if (!isWifi) Color.White else Color.Gray, style = MaterialTheme.typography.bodyMedium)
                     }
                 }
 
-                // 名單渲染分流
+                // 名單分流
                 if (connectionMode == ConnectionMode.WIFI) {
                     // --- Wi-Fi 模式名冊 ---
                     val hasAny = savedServers.isNotEmpty() || unpairedDiscovered.isNotEmpty()
@@ -236,20 +239,21 @@ fun DeviceListScreen(
                         }
                     }
                 } else {
-                    // --- 藍牙 (VR) 模式名冊 ---
+                    // --- 藍牙模式名冊 ---
                     Column(modifier = Modifier.fillMaxWidth()) {
 
-                        // 一鍵開放配對按鈕
+                        // 開放配對按鈕（與 Wi-Fi 切換膠囊高度同一化）
                         Button(
                             onClick = onMakeBtDiscoverable,
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(bottom = 12.dp),
+                                .padding(bottom = 16.dp),
                             shape = RoundedCornerShape(12.dp)
                         ) {
                             Text(stringResource(R.string.bt_make_discoverable), style = MaterialTheme.typography.bodyMedium)
                         }
 
+                        // 💡 修正：自動套用「已配對的裝置：」極簡化標題
                         Text(stringResource(R.string.bt_bonded_devices_title), style = MaterialTheme.typography.titleSmall, color = Color.Gray)
                         Spacer(Modifier.height(6.dp))
 
@@ -275,6 +279,7 @@ fun DeviceListScreen(
                                         else -> stringResource(R.string.status_disconnected)
                                     }
 
+                                    // 💡 視覺完全同一化：沿用與 Wi-Fi 模組完全一致的 Row 與手勢反饋邏輯
                                     DeviceRow(
                                         name = deviceName,
                                         subtitle = statusSubtitle,

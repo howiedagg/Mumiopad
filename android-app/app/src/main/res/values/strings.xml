@@ -17,7 +17,7 @@
     <string name="settings_done">Done</string>
 
     <!-- Device List Dialog -->
-    <string name="dialog_select_computer">Select Computer</string>
+    <string name="dialog_select_computer">Select Device</string>
     <string name="dialog_refresh">Refresh</string>
     <string name="dialog_unpair">Unpair</string>
     <string name="dialog_unpair_confirm_title">Unpair Device</string>
@@ -26,21 +26,21 @@
     <string name="dialog_cancel">Cancel</string>
     <string name="dialog_close">Close</string>
     <string name="dialog_back">Back</string>
-    <string name="dialog_scanning">Searching for computers...</string>
-    <string name="dialog_no_devices">No computers found. Please make sure the server is running on your PC.</string>
+    <string name="dialog_scanning">Searching for devices...</string>
+    <string name="dialog_no_devices">No devices found. Please make sure the server is running.</string>
     <string name="dialog_offline">Offline</string>
     <string name="dialog_unpaired">Unpaired</string>
-    <string name="dialog_unpaired_pc_default">Unpaired Computer</string>
+    <string name="dialog_unpaired_pc_default">Unpaired Device</string>
 
     <!-- Pair Dialog (Legacy / Alternative) -->
     <string name="dialog_enter_pair_code">Enter Pairing Code</string>
     <string name="dialog_pair_code_instruction">Please enter the 6-digit verification pairing code displayed on \"%1$s\":</string>
     <string name="dialog_pair_code_label">6-digit Code</string>
-    <string name="dialog_trusted_computers">Trusted Computers:</string>
+    <string name="dialog_trusted_computers">Trusted Devices:</string>
     <string name="dialog_no_history">No history record</string>
     <string name="dialog_delete">Delete</string>
-    <string name="dialog_new_computers">New unpaired computers:</string>
-    <string name="dialog_no_new_computers">No other new computers found...</string>
+    <string name="dialog_new_computers">New unpaired devices:</string>
+    <string name="dialog_no_new_computers">No other new devices found...</string>
     <string name="dialog_pair">Pair</string>
     <string name="dialog_confirm_pair">Confirm Pair</string>
 
@@ -49,23 +49,28 @@
     <string name="touchpad_not_connected">Not Connected</string>
 
     <!-- Onboarding / Waiting screen -->
-    <string name="onboarding_searching">Looking for computers...</string>
-    <string name="onboarding_hint">Please ensure the server is running on your PC and both devices are on the same Wi-Fi network.</string>
-    <string name="onboarding_select_pc">Select a computer to connect</string>
+    <string name="onboarding_searching">Looking for devices...</string>
+    <string name="onboarding_hint">Please ensure the server is running and both devices are on the same network.</string>
+    <string name="onboarding_select_pc">Select a device to connect</string>
     <string name="onboarding_click_to_pair">Click to pair</string>
     <string name="pairing_request_sent">Pairing request sent</string>
     <string name="pairing_waiting_instruction">Please click \"Yes\" on the dialog appearing on \"%1$s\" to allow connection.</string>
     <string name="pairing_busy_msg">Pairing in progress...</string>
 
     <!-- Network error fallback -->
-    <string name="err_denied">Connection denied. Please click \"Yes\" on your PC.</string>
-    <string name="err_network">Connection failed. Please ensure both devices are on the same Wi-Fi network.</string>
+    <string name="err_denied">Connection denied. Please click \"Yes\" on your device.</string>
+    <string name="err_network">Connection failed. Please ensure both devices are on the same network.</string>
     <string name="err_fallback">Pairing failed: %1$s</string>
-    <string name="snackbar_new_devices">Found %1$d new computer(s), click to pair</string>
+    <string name="snackbar_new_devices">Found %1$d new device(s), click to pair</string>
 
-    <string name="bt_make_discoverable">Make Discoverable (Allow VR to find phone)</string>
-    <string name="bt_bonded_devices_title">Bonded Bluetooth Devices:</string>
-    <string name="bt_no_bonded_devices">No bonded devices. Tap the button above to pair with your VR headset.</string>
+    <string name="bt_make_discoverable">Make Discoverable</string>
+    <string name="bt_bonded_devices_title">Bonded Devices:</string>
+    <string name="bt_no_bonded_devices">No bonded devices found.</string>
     <string name="bt_unknown_device">Unknown Device</string>
     <string name="status_connecting_dots">Connecting...</string>
+
+    <!-- 💡 極簡 Onboarding 新增 -->
+    <string name="onboarding_choice_wifi">Wi-Fi</string>
+    <string name="onboarding_choice_bluetooth">Bluetooth</string>
+    <string name="onboarding_bt_title">Bluetooth Pairing</string>
 </resources>

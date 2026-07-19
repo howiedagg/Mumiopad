@@ -313,6 +313,22 @@ class TouchpadViewModel(
         }
     }
 
+    fun sendText(text: String) {
+        if (_connectionMode.value == ConnectionMode.BLUETOOTH) {
+            btClient.sendText(text)
+        } else {
+            wsClient.sendText(text)
+        }
+    }
+
+    fun sendKeypress(key: String) {
+        if (_connectionMode.value == ConnectionMode.BLUETOOTH) {
+            btClient.sendKeypress(key)
+        } else {
+            wsClient.sendKeypress(key)
+        }
+    }
+
     fun setConnectionMode(mode: ConnectionMode) {
         if (_connectionMode.value == mode) return
         _connectionMode.value = mode
@@ -490,7 +506,6 @@ class TouchpadViewModel(
                     }
                 }
             },
-            // 💡 修正：移除 PairingManager.discover 並不存在的 getSavedServers 參數，避免編譯失敗！
             onFinished = {
                 _isScanning.value = false
             }

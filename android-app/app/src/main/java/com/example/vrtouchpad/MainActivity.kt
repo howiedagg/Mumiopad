@@ -64,7 +64,8 @@ class TouchpadViewModelFactory(private val context: Context) : ViewModelProvider
             settingsStore = settingsStore,
             wifiPerformanceManager = wifiPerformanceManager,
             wifiNetworkIdProvider = wifiNetworkIdProvider,
-                networkProfileStore = networkProfileStore
+            networkProfileStore = networkProfileStore,
+            context = appContext // 💡 修正：補上遺漏的 context 參數，解決編譯失敗問題！
         ) as T
     }
 }
@@ -72,7 +73,6 @@ class TouchpadViewModelFactory(private val context: Context) : ViewModelProvider
 class MainActivity : ComponentActivity() {
     private lateinit var touchpadViewModel: TouchpadViewModel
 
-    // 💡 1. 調整權限請求：加入新版 Android 藍牙權限，並保留原本位置權限通過後的 forceReconnect 邏輯
     private val requestPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
@@ -88,7 +88,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.setBackgroundDrawable(0xFF1E1E1E.toInt().toDrawable())
-        checkAndRequestPermissions() // 💡 2. 初始化請求（取代舊的 checkAndRequestLocationPermissions）
+        checkAndRequestPermissions()
 
         setContent {
             MaterialTheme {
@@ -100,7 +100,6 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    // 💡 3. 動態確認位置與藍牙權限，確保在 Quest/Vision Pro 上安全執行
     private fun checkAndRequestPermissions() {
         val permissionsToRequest = mutableListOf<String>()
 
@@ -126,11 +125,11 @@ class MainActivity : ComponentActivity() {
         if (::touchpadViewModel.isInitialized && touchpadViewModel.connState.value == ConnState.CONNECTED) {
             when (keyCode) {
                 KeyEvent.KEYCODE_VOLUME_UP -> {
-                    touchpadViewModel.wsClient.sendKeypress("VOLUME_UP")
+                    touchpadViewModel.sendKeypress("VOLUME_UP") // 💡 修正：調用 viewModel 統一分流
                     return true
                 }
                 KeyEvent.KEYCODE_VOLUME_DOWN -> {
-                    touchpadViewModel.wsClient.sendKeypress("VOLUME_DOWN")
+                    touchpadViewModel.sendKeypress("VOLUME_DOWN") // 💡 修正：調用 viewModel 統一分流
                     return true
                 }
             }
@@ -162,7 +161,6 @@ fun AppRoot(viewModel: TouchpadViewModel) {
     val connectedServerUuid by viewModel.connectedServerUuid.collectAsState()
     val onlineSavedUuids by viewModel.onlineSavedUuids.collectAsState()
 
-    // 💡 4. 新增對接的藍牙專用狀態訂閱
     val connectionMode by viewModel.connectionMode.collectAsState()
     val btBondedDevices by viewModel.btBondedDevices.collectAsState()
 
@@ -221,8 +219,8 @@ fun AppRoot(viewModel: TouchpadViewModel) {
 
             InvisibleKeyboardInput(
                 active = isKeyboardActive && connState == ConnState.CONNECTED,
-                onSendText = { viewModel.wsClient.sendText(it) },
-                onSendKey = { viewModel.wsClient.sendKeypress(it) },
+                onSendText = { viewModel.sendText(it) }, // 💡 修正：調用 viewModel 統一分流
+                onSendKey = { viewModel.sendKeypress(it) }, // 💡 修正：調用 viewModel 統一分流
                 onKeyboardDismissed = { viewModel.setKeyboardActive(false) }
             )
 
@@ -231,11 +229,21 @@ fun AppRoot(viewModel: TouchpadViewModel) {
                     modifier = Modifier.weight(1f).fillMaxWidth(),
                     unpairedDiscovered = unpairedDiscovered,
                     isScanning = isScanning,
-                    isPairingBusy = isPairingBusy,
                     pairingError = pairingError,
                     pairingNavState = pairingNavState,
                     onStartPairing = { server -> viewModel.triggerPairing(server) },
-                    onCancelPairing = { viewModel.cancelPairing() }
+                    onCancelPairing = { viewModel.cancelPairing() },
+                    // 💡 新增：將雙軌 Onboarding 與 ViewModel 及系統藍牙進行解耦對接
+                    onModeChange = { mode -> viewModel.setConnectionMode(mode) },
+                    onMakeBtDiscoverable = {
+                        val discoverableIntent = android.content.Intent(android.bluetooth.BluetoothAdapter.ACTION_REQUEST_DISCOVERABLE).apply {
+                            putExtra(android.bluetooth.BluetoothAdapter.EXTRA_DISCOVERABLE_DURATION, 120)
+                        }
+                        context.startActivity(discoverableIntent)
+                    },
+                    btBondedDevices = btBondedDevices,
+                    btConnState = connState,
+                    onConnectBt = { device -> viewModel.connectBluetooth(device) }
                 )
             } else {
                 Touchpad(
@@ -271,7 +279,6 @@ fun AppRoot(viewModel: TouchpadViewModel) {
                 onRescan = { viewModel.startPairingScan(clearExisting = true) },
                 onBackToList = { viewModel.cancelPairing() },
                 onDismiss = { viewModel.closeServerSelector() },
-                // 💡 5. 完整對接藍牙專用狀態與方法
                 btBondedDevices = btBondedDevices,
                 btConnState = connState,
                 onConnectBt = { device -> viewModel.connectBluetooth(device) },
