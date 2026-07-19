@@ -19,8 +19,9 @@ fun PairingHost(
     pairingError: String?,
     onSelectSaved: (String) -> Unit,
     onDeleteSaved: (String) -> Unit,
-    onDisconnect: () -> Unit, // 【新增】
+    onDisconnect: () -> Unit,
     onStartPairing: (DiscoveredServer) -> Unit,
+    onRescan: () -> Unit, // 【新增】
     onBackToList: () -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -35,8 +36,9 @@ fun PairingHost(
             isScanning = isScanning,
             onSelectSaved = onSelectSaved,
             onDeleteSaved = onDeleteSaved,
-            onDisconnect = onDisconnect, // 【新增】
+            onDisconnect = onDisconnect,
             onStartPairing = onStartPairing,
+            onRescan = onRescan, // 【新增】
             onDismiss = onDismiss,
         )
 

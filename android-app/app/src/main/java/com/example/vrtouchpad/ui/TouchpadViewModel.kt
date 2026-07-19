@@ -390,7 +390,7 @@ class TouchpadViewModel(
         startPairingScan()
     }
 
-    private fun startPairingScan(clearExisting: Boolean = true) {
+    fun startPairingScan(clearExisting: Boolean = true) {
         if (clearExisting) {
             _unpairedDiscovered.value = emptyList()
         }

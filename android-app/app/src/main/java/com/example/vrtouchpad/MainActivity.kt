@@ -257,13 +257,13 @@ fun AppRoot(viewModel: TouchpadViewModel) {
                 pairingError = pairingError,
                 onSelectSaved = { uuid -> viewModel.selectServer(uuid) },
                 onDeleteSaved = { uuid -> viewModel.deleteServer(uuid) },
-                onDisconnect = { viewModel.disconnect() }, // 【修正】：連結斷線邏輯
+                onDisconnect = { viewModel.disconnect() },
                 onStartPairing = { server -> viewModel.triggerPairing(server) },
+                onRescan = { viewModel.startPairingScan(clearExisting = true) },
                 onBackToList = { viewModel.cancelPairing() },
                 onDismiss = { viewModel.closeServerSelector() },
             )
         }
-
         if (showSettings) {
             SettingsDialog(
                 mouseSpeed = mouseSpeed,

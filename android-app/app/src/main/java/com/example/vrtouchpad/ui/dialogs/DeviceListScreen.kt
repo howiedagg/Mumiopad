@@ -21,9 +21,14 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+// 【新增】：匯入 M3 內建的極簡 Refresh 圖示
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SwipeToDismissBox
 import androidx.compose.material3.SwipeToDismissBoxValue
@@ -39,7 +44,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-// 【新增】：匯入系統觸覺回饋 API
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.unit.dp
@@ -58,11 +62,10 @@ fun DeviceListScreen(
     onDeleteSaved: (String) -> Unit,
     onDisconnect: () -> Unit,
     onStartPairing: (DiscoveredServer) -> Unit,
+    onRescan: () -> Unit, // 【新增】：重新整理連線對話框的回呼
     onDismiss: () -> Unit,
 ) {
     var serverToDelete by remember { mutableStateOf<SavedServer?>(null) }
-
-    // 【新增】：取得當前畫面底層的系統震動回饋管理器
     val haptic = LocalHapticFeedback.current
 
     if (serverToDelete != null) {
@@ -94,7 +97,27 @@ fun DeviceListScreen(
             ) {
                 Text("選擇電腦")
                 if (isScanning) {
-                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(20.dp),
+                        strokeWidth = 2.dp,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                } else {
+                    // 【新增】：極簡無文字的「重新整理 🔄」IconButton，只在非掃描時悄悄出現
+                    IconButton(
+                        onClick = {
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            onRescan()
+                        },
+                        modifier = Modifier.size(24.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Refresh,
+                            contentDescription = "重新整理",
+                            tint = Color.Gray,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
                 }
             }
         },
@@ -127,7 +150,6 @@ fun DeviceListScreen(
                         val dismissState = rememberSwipeToDismissBoxState(
                             confirmValueChange = { value ->
                                 if (value == SwipeToDismissBoxValue.EndToStart) {
-                                    // 【新增】：在觸發滑動刪除時，同步震動一次給予實體反饋
                                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                                     serverToDelete = server
                                     false
@@ -169,7 +191,6 @@ fun DeviceListScreen(
                                 },
                                 onLongClick = {
                                     if (isConnected) {
-                                        // 【新增】：長按成功生效的瞬間，觸發手機微小扎實的長按震動回饋！
                                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                                         onDisconnect()
                                     }
