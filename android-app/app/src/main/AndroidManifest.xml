@@ -10,7 +10,12 @@
     <!-- Android 13+ mDNS/NSD 探索需要 -->
     <uses-permission android:name="android.permission.NEARBY_WIFI_DEVICES"
         android:usesPermissionFlags="neverForLocation" />
-    <!-- 藍牙HID模式(Phase 2)預留 -->
+
+    <!-- 舊版 Android (Android 11 以下) 兼容權限 -->
+    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
+
+    <!-- 新版 Android (Android 12 以上) 必備的藍牙與廣播權限 -->
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
     <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
 

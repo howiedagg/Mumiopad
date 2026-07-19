@@ -62,4 +62,10 @@
     <string name="err_network">連線失敗，請確認手機與電腦處於相同 Wi-Fi 網路</string>
     <string name="err_fallback">配對失敗: %1$s</string>
     <string name="snackbar_new_devices">發現 %1$d 台新電腦，點擊配對</string>
+
+    <string name="bt_make_discoverable">開放藍牙配對 (讓 VR 搜尋手機)</string>
+    <string name="bt_bonded_devices_title">已配對的藍牙裝置：</string>
+    <string name="bt_no_bonded_devices">無已配對的藍牙設備，請點擊上方按鈕在 VR 設備內配對</string>
+    <string name="bt_unknown_device">未知裝置</string>
+    <string name="status_connecting_dots">連線中...</string>
 </resources>

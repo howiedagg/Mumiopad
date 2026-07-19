@@ -13,8 +13,11 @@ class SettingsStore(context: Context) {
         get() = prefs.getFloat("scroll_speed", 1.0f)
         set(value) = prefs.edit().putFloat("scroll_speed", value).apply()
 
-    // 【新增】：反向滾動開關，預設為 true（自然滾動）
     var reverseScroll: Boolean
         get() = prefs.getBoolean("reverse_scroll", true)
         set(value) = prefs.edit().putBoolean("reverse_scroll", value).apply()
+
+    var connectionMode: String
+        get() = prefs.getString("connection_mode", "WIFI") ?: "WIFI"
+        set(value) = prefs.edit().putString("connection_mode", value).apply()
 }

@@ -13,6 +13,8 @@ import com.example.vrtouchpad.data.WifiPerformanceManager
 import com.example.vrtouchpad.engine.ConnectionOrchestrator
 import com.example.vrtouchpad.network.ConnState
 import com.example.vrtouchpad.network.TouchpadWebSocketClient
+import com.example.vrtouchpad.network.BluetoothHidTouchpadClient
+import com.example.vrtouchpad.engine.TouchOutEvent
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -23,12 +25,15 @@ import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
+enum class ConnectionMode { WIFI, BLUETOOTH }
+
 class TouchpadViewModel(
     private val pairingManager: PairingManager,
     private val settingsStore: SettingsStore,
     private val wifiPerformanceManager: WifiPerformanceManager,
     private val wifiNetworkIdProvider: WifiNetworkIdProvider,
-    private val networkProfileStore: NetworkProfileStore
+    private val networkProfileStore: NetworkProfileStore,
+    private val context: android.content.Context
 ) : ViewModel() {
 
     private val _unpairedDiscovered = MutableStateFlow<List<DiscoveredServer>>(emptyList())
@@ -67,6 +72,18 @@ class TouchpadViewModel(
     private val _userWantsOffline = MutableStateFlow(false)
     val userWantsOffline: StateFlow<Boolean> = _userWantsOffline
 
+    private val _connectionMode = MutableStateFlow(
+        try {
+            ConnectionMode.valueOf(settingsStore.connectionMode)
+        } catch (e: Exception) {
+            ConnectionMode.WIFI
+        }
+    )
+    val connectionMode: StateFlow<ConnectionMode> = _connectionMode
+
+    private val _btBondedDevices = MutableStateFlow<List<android.bluetooth.BluetoothDevice>>(emptyList())
+    val btBondedDevices: StateFlow<List<android.bluetooth.BluetoothDevice>> = _btBondedDevices
+
     private var isAppActive = true
     private var pendingPairServer: DiscoveredServer? = null
     private var lastDialToken: String? = null
@@ -99,6 +116,8 @@ class TouchpadViewModel(
         }
     )
 
+    val btClient = BluetoothHidTouchpadClient(context)
+
     private val orchestrator = ConnectionOrchestrator(
         scope = viewModelScope,
         wifiNetworkIdProvider = wifiNetworkIdProvider,
@@ -129,15 +148,21 @@ class TouchpadViewModel(
     )
 
     val connState: StateFlow<ConnState> = combine(
+        _connectionMode,
         orchestrator.phase,
-        wsClient.connState
-    ) { orthoPhase, wsState ->
-        when {
-            wsState == ConnState.CONNECTED -> ConnState.CONNECTED
-            wsState == ConnState.AUTH_FAILED -> ConnState.AUTH_FAILED
-            wsState == ConnState.PAIRING -> ConnState.PAIRING
-            orthoPhase is ConnectionOrchestrator.Phase.Connecting || wsState == ConnState.CONNECTING -> ConnState.CONNECTING
-            else -> ConnState.DISCONNECTED
+        wsClient.connState,
+        btClient.connState
+    ) { mode, orthoPhase, wsState, btState ->
+        if (mode == ConnectionMode.BLUETOOTH) {
+            btState
+        } else {
+            when {
+                wsState == ConnState.CONNECTED -> ConnState.CONNECTED
+                wsState == ConnState.AUTH_FAILED -> ConnState.AUTH_FAILED
+                wsState == ConnState.PAIRING -> ConnState.PAIRING
+                orthoPhase is ConnectionOrchestrator.Phase.Connecting || wsState == ConnState.CONNECTING -> ConnState.CONNECTING
+                else -> ConnState.DISCONNECTED
+            }
         }
     }.stateIn(
         scope = viewModelScope,
@@ -149,24 +174,30 @@ class TouchpadViewModel(
         connState,
         _savedServers
     ) { state, _ ->
-        if (state == ConnState.CONNECTED) pairingManager.getSelectedServerUuid() else null
+        if (state == ConnState.CONNECTED && _connectionMode.value == ConnectionMode.WIFI) pairingManager.getSelectedServerUuid() else null
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
     val connectedServerName: StateFlow<String?> = combine(
+        _connectionMode,
         orchestrator.phase,
         wsClient.connState,
         _savedServers
-    ) { orthoPhase, wsState, savedList ->
-        if (wsState == ConnState.CONNECTED) {
-            when (orthoPhase) {
-                is ConnectionOrchestrator.Phase.Connected -> orthoPhase.serverName
-                else -> {
-                    val activeUuid = pairingManager.getSelectedServerUuid()
-                    savedList.find { it.uuid == activeUuid }?.name
-                }
-            }
-        } else {
+    ) { mode, orthoPhase, wsState, savedList ->
+        if (mode == ConnectionMode.BLUETOOTH) {
+            // 💡 修正：直接返回 null，最外層 UI (StatusBar) 偵測到 null，會自動回退顯示 localized 的「已連線/Connected」
             null
+        } else {
+            if (wsState == ConnState.CONNECTED) {
+                when (orthoPhase) {
+                    is ConnectionOrchestrator.Phase.Connected -> orthoPhase.serverName
+                    else -> {
+                        val activeUuid = pairingManager.getSelectedServerUuid()
+                        savedList.find { it.uuid == activeUuid }?.name
+                    }
+                }
+            } else {
+                null
+            }
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
@@ -174,23 +205,29 @@ class TouchpadViewModel(
         connState,
         _savedServers
     ) { state, _ ->
-        if (state == ConnState.CONNECTED) pairingManager.getSelectedServerUuid() else null
+        if (state == ConnState.CONNECTED && _connectionMode.value == ConnectionMode.WIFI) pairingManager.getSelectedServerUuid() else null
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
     init {
         refreshServerLists()
 
-        if (pairingManager.getSavedServers().isEmpty()) {
-            startPairingScan()
+        if (_connectionMode.value == ConnectionMode.WIFI) {
+            if (pairingManager.getSavedServers().isEmpty()) {
+                startPairingScan()
+            } else {
+                orchestrator.start()
+            }
         } else {
-            orchestrator.start()
+            refreshBtDevices()
         }
 
         viewModelScope.launch {
             connState.collect { state ->
                 if (state == ConnState.CONNECTED) {
                     _unpairedDiscovered.value = emptyList()
-                    wifiPerformanceManager.acquire()
+                    if (_connectionMode.value == ConnectionMode.WIFI) {
+                        wifiPerformanceManager.acquire()
+                    }
                 } else {
                     wifiPerformanceManager.release()
                 }
@@ -199,6 +236,8 @@ class TouchpadViewModel(
 
         viewModelScope.launch {
             wsClient.connState.collect { state ->
+                if (_connectionMode.value != ConnectionMode.WIFI) return@collect
+
                 if (state == ConnState.AUTH_FAILED) {
                     val failedUuid = lastDialToken?.let { token ->
                         pairingManager.getSavedServers().find { it.token == token }?.uuid
@@ -237,17 +276,59 @@ class TouchpadViewModel(
         _savedServers.value = pairingManager.getSavedServers()
     }
 
+    fun refreshBtDevices() {
+        _btBondedDevices.value = btClient.getBondedDevices()
+    }
+
+    fun connectBluetooth(device: android.bluetooth.BluetoothDevice) {
+        btClient.connect(device)
+    }
+
+    fun disconnectBluetooth() {
+        btClient.disconnectHost()
+    }
+
     fun updateAppActive(active: Boolean) {
         isAppActive = active
         if (active) {
             _userWantsOffline.value = false
-            if (pairingManager.getSavedServers().isNotEmpty()) {
+            if (_connectionMode.value == ConnectionMode.WIFI && pairingManager.getSavedServers().isNotEmpty()) {
                 orchestrator.start()
+            } else if (_connectionMode.value == ConnectionMode.BLUETOOTH) {
+                refreshBtDevices()
             }
         } else {
             orchestrator.stop()
             wsClient.close()
+            btClient.close()
             wifiPerformanceManager.release()
+        }
+    }
+
+    fun sendEvent(event: TouchOutEvent) {
+        if (_connectionMode.value == ConnectionMode.BLUETOOTH) {
+            btClient.sendEvent(event)
+        } else {
+            wsClient.sendEvent(event)
+        }
+    }
+
+    fun setConnectionMode(mode: ConnectionMode) {
+        if (_connectionMode.value == mode) return
+        _connectionMode.value = mode
+        settingsStore.connectionMode = mode.name
+
+        if (mode == ConnectionMode.BLUETOOTH) {
+            orchestrator.stop()
+            wsClient.close()
+            wifiPerformanceManager.release()
+            refreshBtDevices()
+        } else {
+            btClient.close()
+            _unpairedDiscovered.value = emptyList()
+            if (pairingManager.getSavedServers().isNotEmpty()) {
+                orchestrator.start()
+            }
         }
     }
 
@@ -328,6 +409,7 @@ class TouchpadViewModel(
         _userWantsOffline.value = true
         orchestrator.stop()
         wsClient.close()
+        btClient.close()
         _pairingNavState.value = PairingNavState.Hidden
     }
 
@@ -335,7 +417,7 @@ class TouchpadViewModel(
         val activeUuid = pairingManager.getSelectedServerUuid()
         val serverToBeDeletedInfo = pairingManager.getSavedServers().find { it.uuid == uuid }
 
-        if (activeUuid == uuid && connState.value == ConnState.CONNECTED) {
+        if (activeUuid == uuid && connState.value == ConnState.CONNECTED && _connectionMode.value == ConnectionMode.WIFI) {
             runCatching { wsClient.sendUnpairRequest() }
             wsClient.close()
         }
@@ -357,10 +439,14 @@ class TouchpadViewModel(
                 _unpairedDiscovered.value = listOf(convertedUnpaired)
             }
 
-            startPairingScan(clearExisting = false)
+            if (_connectionMode.value == ConnectionMode.WIFI) {
+                startPairingScan(clearExisting = false)
+            }
         } else {
-            orchestrator.start()
-            startPairingScan(clearExisting = true)
+            if (_connectionMode.value == ConnectionMode.WIFI) {
+                orchestrator.start()
+                startPairingScan(clearExisting = true)
+            }
         }
     }
 
@@ -368,7 +454,7 @@ class TouchpadViewModel(
         pendingPairServer = null
         _pairingNavState.value = PairingNavState.Hidden
 
-        if (!_userWantsOffline.value && connState.value != ConnState.CONNECTED && pairingManager.getSavedServers().isNotEmpty()) {
+        if (!_userWantsOffline.value && connState.value != ConnState.CONNECTED && pairingManager.getSavedServers().isNotEmpty() && _connectionMode.value == ConnectionMode.WIFI) {
             orchestrator.start()
         }
     }
@@ -379,7 +465,9 @@ class TouchpadViewModel(
         pendingPairServer = null
         refreshServerLists()
         _pairingNavState.value = PairingNavState.DeviceList
-        startPairingScan()
+        if (_connectionMode.value == ConnectionMode.WIFI) {
+            startPairingScan()
+        }
     }
 
     fun startPairingScan(clearExisting: Boolean = true) {
@@ -402,6 +490,7 @@ class TouchpadViewModel(
                     }
                 }
             },
+            // 💡 修正：移除 PairingManager.discover 並不存在的 getSavedServers 參數，避免編譯失敗！
             onFinished = {
                 _isScanning.value = false
             }
@@ -409,8 +498,10 @@ class TouchpadViewModel(
     }
 
     fun forceReconnect() {
-        if (pairingManager.getSavedServers().isNotEmpty()) {
+        if (pairingManager.getSavedServers().isNotEmpty() && _connectionMode.value == ConnectionMode.WIFI) {
             orchestrator.start()
+        } else if (_connectionMode.value == ConnectionMode.BLUETOOTH) {
+            refreshBtDevices()
         }
     }
 
@@ -418,6 +509,7 @@ class TouchpadViewModel(
         super.onCleared()
         orchestrator.stop()
         wsClient.close()
+        btClient.close()
         wifiPerformanceManager.release()
     }
 }

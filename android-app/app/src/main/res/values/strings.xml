@@ -62,4 +62,10 @@
     <string name="err_network">Connection failed. Please ensure both devices are on the same Wi-Fi network.</string>
     <string name="err_fallback">Pairing failed: %1$s</string>
     <string name="snackbar_new_devices">Found %1$d new computer(s), click to pair</string>
+
+    <string name="bt_make_discoverable">Make Discoverable (Allow VR to find phone)</string>
+    <string name="bt_bonded_devices_title">Bonded Bluetooth Devices:</string>
+    <string name="bt_no_bonded_devices">No bonded devices. Tap the button above to pair with your VR headset.</string>
+    <string name="bt_unknown_device">Unknown Device</string>
+    <string name="status_connecting_dots">Connecting...</string>
 </resources>

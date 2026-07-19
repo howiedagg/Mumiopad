@@ -64,7 +64,7 @@ class TouchpadViewModelFactory(private val context: Context) : ViewModelProvider
             settingsStore = settingsStore,
             wifiPerformanceManager = wifiPerformanceManager,
             wifiNetworkIdProvider = wifiNetworkIdProvider,
-            networkProfileStore = networkProfileStore
+                networkProfileStore = networkProfileStore
         ) as T
     }
 }
@@ -72,6 +72,7 @@ class TouchpadViewModelFactory(private val context: Context) : ViewModelProvider
 class MainActivity : ComponentActivity() {
     private lateinit var touchpadViewModel: TouchpadViewModel
 
+    // 💡 1. 調整權限請求：加入新版 Android 藍牙權限，並保留原本位置權限通過後的 forceReconnect 邏輯
     private val requestPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
@@ -87,7 +88,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.setBackgroundDrawable(0xFF1E1E1E.toInt().toDrawable())
-        checkAndRequestLocationPermissions()
+        checkAndRequestPermissions() // 💡 2. 初始化請求（取代舊的 checkAndRequestLocationPermissions）
 
         setContent {
             MaterialTheme {
@@ -99,22 +100,25 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun checkAndRequestLocationPermissions() {
-        val hasFine = ContextCompat.checkSelfPermission(
-            this, Manifest.permission.ACCESS_FINE_LOCATION
-        ) == PackageManager.PERMISSION_GRANTED
+    // 💡 3. 動態確認位置與藍牙權限，確保在 Quest/Vision Pro 上安全執行
+    private fun checkAndRequestPermissions() {
+        val permissionsToRequest = mutableListOf<String>()
 
-        val hasCoarse = ContextCompat.checkSelfPermission(
-            this, Manifest.permission.ACCESS_COARSE_LOCATION
-        ) == PackageManager.PERMISSION_GRANTED
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+            permissionsToRequest.add(Manifest.permission.ACCESS_FINE_LOCATION)
+        }
 
-        if (!hasFine && !hasCoarse) {
-            requestPermissionLauncher.launch(
-                arrayOf(
-                    Manifest.permission.ACCESS_FINE_LOCATION,
-                    Manifest.permission.ACCESS_COARSE_LOCATION
-                )
-            )
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+                permissionsToRequest.add(Manifest.permission.BLUETOOTH_CONNECT)
+            }
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_ADVERTISE) != PackageManager.PERMISSION_GRANTED) {
+                permissionsToRequest.add(Manifest.permission.BLUETOOTH_ADVERTISE)
+            }
+        }
+
+        if (permissionsToRequest.isNotEmpty()) {
+            requestPermissionLauncher.launch(permissionsToRequest.toTypedArray())
         }
     }
 
@@ -138,6 +142,7 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun AppRoot(viewModel: TouchpadViewModel) {
     val scope = rememberCoroutineScope()
+    val context = androidx.compose.ui.platform.LocalContext.current
 
     val connState by viewModel.connState.collectAsState()
     val pairingNavState by viewModel.pairingNavState.collectAsState()
@@ -156,6 +161,10 @@ fun AppRoot(viewModel: TouchpadViewModel) {
     val connectedServerName by viewModel.connectedServerName.collectAsState()
     val connectedServerUuid by viewModel.connectedServerUuid.collectAsState()
     val onlineSavedUuids by viewModel.onlineSavedUuids.collectAsState()
+
+    // 💡 4. 新增對接的藍牙專用狀態訂閱
+    val connectionMode by viewModel.connectionMode.collectAsState()
+    val btBondedDevices by viewModel.btBondedDevices.collectAsState()
 
     var showSettings by remember { mutableStateOf(false) }
 
@@ -237,7 +246,7 @@ fun AppRoot(viewModel: TouchpadViewModel) {
                     reverseScroll = reverseScroll,
                     scope = scope,
                     isKeyboardActive = isKeyboardActive,
-                    onOutEvent = { viewModel.wsClient.sendEvent(it) },
+                    onOutEvent = { viewModel.sendEvent(it) },
                     onToggleKeyboard = { viewModel.toggleKeyboard() }
                 )
             }
@@ -246,6 +255,8 @@ fun AppRoot(viewModel: TouchpadViewModel) {
         if (!showOnboarding) {
             PairingHost(
                 navState = pairingNavState,
+                connectionMode = connectionMode,
+                onModeChange = { viewModel.setConnectionMode(it) },
                 savedServers = savedServers,
                 onlineSavedUuids = onlineSavedUuids,
                 connectedUuid = connectedServerUuid,
@@ -260,6 +271,17 @@ fun AppRoot(viewModel: TouchpadViewModel) {
                 onRescan = { viewModel.startPairingScan(clearExisting = true) },
                 onBackToList = { viewModel.cancelPairing() },
                 onDismiss = { viewModel.closeServerSelector() },
+                // 💡 5. 完整對接藍牙專用狀態與方法
+                btBondedDevices = btBondedDevices,
+                btConnState = connState,
+                onConnectBt = { device -> viewModel.connectBluetooth(device) },
+                onDisconnectBt = { viewModel.disconnectBluetooth() },
+                onMakeBtDiscoverable = {
+                    val discoverableIntent = android.content.Intent(android.bluetooth.BluetoothAdapter.ACTION_REQUEST_DISCOVERABLE).apply {
+                        putExtra(android.bluetooth.BluetoothAdapter.EXTRA_DISCOVERABLE_DURATION, 120)
+                    }
+                    context.startActivity(discoverableIntent)
+                }
             )
         }
         if (showSettings) {
