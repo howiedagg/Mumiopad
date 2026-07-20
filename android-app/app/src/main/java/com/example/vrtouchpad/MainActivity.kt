@@ -31,6 +31,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
 
+// 💡 注意：請確認你的專案中已定義好 ConnectionMode.BLUETOOTH 列舉，若是在 ui 層級請確保有正確 import
+import com.example.vrtouchpad.ui.ConnectionMode
 import com.example.vrtouchpad.ui.PairingNavState
 import com.example.vrtouchpad.ui.TouchpadViewModel
 import com.example.vrtouchpad.ui.components.DiscoveredDeviceSnackbar
@@ -164,6 +166,10 @@ fun AppRoot(viewModel: TouchpadViewModel) {
     val connectionMode by viewModel.connectionMode.collectAsState()
     val btBondedDevices by viewModel.btBondedDevices.collectAsState()
 
+    // 💡 新增：收集藍牙歷史配對名冊與連線地址
+    val savedBtAddresses by viewModel.savedBtAddresses.collectAsState()
+    val connectedBtAddress by viewModel.connectedBtAddress.collectAsState()
+
     var showSettings by remember { mutableStateOf(false) }
 
     val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
@@ -189,7 +195,14 @@ fun AppRoot(viewModel: TouchpadViewModel) {
         }
     }
 
-    val showOnboarding = savedServers.isEmpty() && connState != ConnState.CONNECTED
+    // 💡 修正核心：讓 Onboarding 判定支援「雙軌感知」。
+    // 如果使用者在藍牙模式下已有成功配對記錄（savedBtAddresses 不為空），重開機時直接進入 Touchpad 主畫面，
+    // 在背景靜默重連，徹底消滅每次開機時「先閃現初始配對畫面」的尷尬體驗！
+    val showOnboarding = if (connectionMode == ConnectionMode.BLUETOOTH) {
+        savedBtAddresses.isEmpty() && connState != ConnState.CONNECTED
+    } else {
+        savedServers.isEmpty() && connState != ConnState.CONNECTED
+    }
 
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize()) {
@@ -235,6 +248,8 @@ fun AppRoot(viewModel: TouchpadViewModel) {
                     onCancelPairing = { viewModel.cancelPairing() },
                     onModeChange = { mode -> viewModel.setConnectionMode(mode) },
                     onMakeBtDiscoverable = {
+                        // 💡 修正 1：在開放配對搜尋前，先主動斷開當前藍牙連線，放開硬體佔用
+                        viewModel.disconnectBluetooth()
                         val discoverableIntent = android.content.Intent(android.bluetooth.BluetoothAdapter.ACTION_REQUEST_DISCOVERABLE).apply {
                             putExtra(android.bluetooth.BluetoothAdapter.EXTRA_DISCOVERABLE_DURATION, 120)
                         }
@@ -245,7 +260,10 @@ fun AppRoot(viewModel: TouchpadViewModel) {
                     onConnectBt = { device -> viewModel.connectBluetooth(device) },
                     // 💡 修正：安全橋接 ViewModel 的首次開卡與狀態同步參數
                     isFirstLaunch = viewModel.isFirstLaunch,
-                    connectionMode = connectionMode
+                    connectionMode = connectionMode,
+                    // 💡 修正 2：傳入藍牙歷史對應參數
+                    savedBtAddresses = savedBtAddresses,
+                    connectedBtAddress = connectedBtAddress
                 )
             } else {
                 Touchpad(
@@ -269,7 +287,9 @@ fun AppRoot(viewModel: TouchpadViewModel) {
                 onModeChange = { viewModel.setConnectionMode(it) },
                 savedServers = savedServers,
                 onlineSavedUuids = onlineSavedUuids,
-                connectedUuid = connectedServerUuid,
+                // 💡 修正 3：融合多模連線 UUID。
+                // 藍牙模式下帶入當前連線 MAC；Wi-Fi 模式下帶入當前連線電腦 UUID，複用參數
+                connectedUuid = if (connectionMode == ConnectionMode.BLUETOOTH) connectedBtAddress else connectedServerUuid,
                 unpairedDiscovered = unpairedDiscovered,
                 isScanning = isScanning,
                 isPairingBusy = isPairingBusy,
@@ -286,11 +306,14 @@ fun AppRoot(viewModel: TouchpadViewModel) {
                 onConnectBt = { device -> viewModel.connectBluetooth(device) },
                 onDisconnectBt = { viewModel.disconnectBluetooth() },
                 onMakeBtDiscoverable = {
+                    // 💡 修正 4：在 Dialog 點選開放配對時，也一併主動斷開當前藍牙，放開硬體佔用
+                    viewModel.disconnectBluetooth()
                     val discoverableIntent = android.content.Intent(android.bluetooth.BluetoothAdapter.ACTION_REQUEST_DISCOVERABLE).apply {
                         putExtra(android.bluetooth.BluetoothAdapter.EXTRA_DISCOVERABLE_DURATION, 120)
                     }
                     context.startActivity(discoverableIntent)
-                }
+                },
+                savedBtAddresses = savedBtAddresses // 💡 新增傳遞歷史名單至 PairingHost
             )
         }
         if (showSettings) {

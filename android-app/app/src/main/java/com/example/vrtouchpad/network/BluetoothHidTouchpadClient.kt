@@ -175,6 +175,7 @@ class BluetoothHidTouchpadClient(private val context: Context) : ConnectionClien
     private fun sendConsumerReport(controlMask: Byte) {
         val device = mHostDevice
         val hid = mHidDevice
+        // 💡 修正 1：修正原本錯字將 mHostDevice 誤寫為 host 的問題
         if (device != null && hid != null) {
             val report = byteArrayOf(controlMask)
             hid.sendReport(device, 3, report)
@@ -297,6 +298,23 @@ class BluetoothHidTouchpadClient(private val context: Context) : ConnectionClien
     @SuppressLint("MissingPermission")
     fun getBondedDevices(): List<BluetoothDevice> {
         return mBtAdapter?.bondedDevices?.toList() ?: emptyList()
+    }
+
+    /**
+     * 💡 補上遺漏的反射實作：強制 Android 系統抹除與該設備的實體配對金鑰（Unpair/Unbond）
+     * 由於 Android SDK 預設將 removeBond() 標記為系統 API (hide)，我們必須透過 Java 反射安全調用它。
+     */
+    @SuppressLint("MissingPermission")
+    fun removeBond(device: BluetoothDevice): Boolean {
+        return try {
+            val method = device.javaClass.getMethod("removeBond")
+            val result = method.invoke(device) as Boolean
+            Log.d("BT_HID", "系統解除配對 (removeBond) 呼交結果: $result")
+            result
+        } catch (e: Exception) {
+            Log.e("BT_HID", "反射呼叫 removeBond 失敗: ${e.message}", e)
+            false
+        }
     }
 
     @SuppressLint("MissingPermission")

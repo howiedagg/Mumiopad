@@ -1,3 +1,5 @@
+// D:/howie/Documents/vr-touchpad-app/vr-touchpad-app/android-app/app/src/main/java/com/example/vrtouchpad/ui/dialogs/PairingHost.kt
+
 package com.example.vrtouchpad.ui.dialogs
 
 import android.bluetooth.BluetoothDevice
@@ -27,12 +29,12 @@ fun PairingHost(
     onRescan: () -> Unit,
     onBackToList: () -> Unit,
     onDismiss: () -> Unit,
-    // 💡 藍牙對接參數
     btBondedDevices: List<BluetoothDevice>,
     btConnState: com.example.vrtouchpad.network.ConnState,
     onConnectBt: (BluetoothDevice) -> Unit,
     onDisconnectBt: () -> Unit,
-    onMakeBtDiscoverable: () -> Unit
+    onMakeBtDiscoverable: () -> Unit,
+    savedBtAddresses: Set<String> // 💡 新增
 ) {
     when (navState) {
         is PairingNavState.Hidden -> Unit
@@ -55,7 +57,8 @@ fun PairingHost(
             btConnState = btConnState,
             onConnectBt = onConnectBt,
             onDisconnectBt = onDisconnectBt,
-            onMakeBtDiscoverable = onMakeBtDiscoverable
+            onMakeBtDiscoverable = onMakeBtDiscoverable,
+            savedBtAddresses = savedBtAddresses // 💡 傳遞
         )
 
         is PairingNavState.PairingWaiting -> PairingWaitingScreen(

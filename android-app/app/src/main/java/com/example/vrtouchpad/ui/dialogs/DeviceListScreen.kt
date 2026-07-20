@@ -47,13 +47,20 @@ fun DeviceListScreen(
     onStartPairing: (DiscoveredServer) -> Unit,
     onRescan: () -> Unit,
     onDismiss: () -> Unit,
+    // 💡 藍牙所需新參數
     btBondedDevices: List<BluetoothDevice>,
     btConnState: com.example.vrtouchpad.network.ConnState,
     onConnectBt: (BluetoothDevice) -> Unit,
     onDisconnectBt: () -> Unit,
-    onMakeBtDiscoverable: () -> Unit
+    onMakeBtDiscoverable: () -> Unit,
+    savedBtAddresses: Set<String> // 💡 新增：已儲存的藍牙地址
 ) {
+    // 💡 修正：歷史刪除彈窗將「SavedServer?」改為統一的地址或設備，
+    // 為求最乾淨的低耦合，我們直接使用字串與名稱。
+    var btAddressToDelete by remember { mutableStateOf<String?>(null) }
+    var btNameToDelete by remember { mutableStateOf("") }
     var serverToDelete by remember { mutableStateOf<SavedServer?>(null) }
+
     val haptic = LocalHapticFeedback.current
 
     if (serverToDelete != null) {
@@ -75,6 +82,26 @@ fun DeviceListScreen(
         )
     }
 
+    // 💡 新增：藍牙左滑解綁確認對話框
+    if (btAddressToDelete != null) {
+        AlertDialog(
+            onDismissRequest = { btAddressToDelete = null },
+            title = { Text(stringResource(R.string.dialog_unpair_confirm_title)) },
+            text = { Text(stringResource(R.string.dialog_unpair_confirm_msg, btNameToDelete)) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        btAddressToDelete?.let { onDeleteSaved(it) } // 統一由 ViewModel 的刪除接口分流處理
+                        btAddressToDelete = null
+                    }
+                ) { Text(stringResource(R.string.dialog_confirm), color = Color(0xFFEF5350)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { btAddressToDelete = null }) { Text(stringResource(R.string.dialog_cancel)) }
+            }
+        )
+    }
+
     AlertDialog(
         onDismissRequest = onDismiss,
         title = {
@@ -83,7 +110,6 @@ fun DeviceListScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                // 💡 自動套用極簡化後的「選擇裝置」標題
                 Text(stringResource(R.string.dialog_select_computer))
                 if (connectionMode == ConnectionMode.WIFI) {
                     if (isScanning) {
@@ -147,7 +173,6 @@ fun DeviceListScreen(
                             .padding(vertical = 8.dp),
                         contentAlignment = Alignment.Center
                     ) {
-                        // 💡 修正：移除「(VR)」標籤，回歸最單純的「藍牙」
                         Text("藍牙", color = if (!isWifi) Color.White else Color.Gray, style = MaterialTheme.typography.bodyMedium)
                     }
                 }
@@ -242,7 +267,6 @@ fun DeviceListScreen(
                     // --- 藍牙模式名冊 ---
                     Column(modifier = Modifier.fillMaxWidth()) {
 
-                        // 開放配對按鈕（與 Wi-Fi 切換膠囊高度同一化）
                         Button(
                             onClick = onMakeBtDiscoverable,
                             modifier = Modifier
@@ -253,7 +277,6 @@ fun DeviceListScreen(
                             Text(stringResource(R.string.bt_make_discoverable), style = MaterialTheme.typography.bodyMedium)
                         }
 
-                        // 💡 修正：自動套用「已配對的裝置：」極簡化標題
                         Text(stringResource(R.string.bt_bonded_devices_title), style = MaterialTheme.typography.titleSmall, color = Color.Gray)
                         Spacer(Modifier.height(6.dp))
 
@@ -261,14 +284,17 @@ fun DeviceListScreen(
                             Text(stringResource(R.string.bt_no_bonded_devices), style = MaterialTheme.typography.bodyMedium, color = Color.DarkGray)
                         } else {
                             LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 200.dp)) {
-                                items(btBondedDevices) { device ->
-                                    val isConnected = btConnState == com.example.vrtouchpad.network.ConnState.CONNECTED
-                                    val isConnecting = btConnState == com.example.vrtouchpad.network.ConnState.CONNECTING
+                                items(btBondedDevices, key = { it.address }) { device ->
+                                    val isConnected = device.address == connectedUuid
+                                    val isConnecting = !isConnected && btConnState == com.example.vrtouchpad.network.ConnState.CONNECTING
+                                    val isSaved = savedBtAddresses.contains(device.address)
 
+                                    // 💡 修正 1：依據物理狀態與歷史名單，分流四色燈號！
                                     val dotColor = when {
-                                        isConnected -> Color(0xFF4CAF50)
-                                        isConnecting -> Color(0xFFFFA000)
-                                        else -> Color(0xFF757575)
+                                        isConnected -> Color(0xFF4CAF50)   // 🟢 綠燈：連線中
+                                        isConnecting -> Color(0xFFFFA000)  // 🟡 橘燈：嘗試中
+                                        isSaved -> Color(0xFF42A5F5)       // 🔵 藍燈：配對/成功連線過的歷史設備！
+                                        else -> Color(0xFF757575)          // ⚪ 灰燈：其他無關系統藍牙裝置（如耳機）
                                     }
 
                                     @SuppressLint("MissingPermission")
@@ -279,23 +305,78 @@ fun DeviceListScreen(
                                         else -> stringResource(R.string.status_disconnected)
                                     }
 
-                                    // 💡 視覺完全同一化：沿用與 Wi-Fi 模組完全一致的 Row 與手勢反饋邏輯
-                                    DeviceRow(
-                                        name = deviceName,
-                                        subtitle = statusSubtitle,
-                                        dotColor = dotColor,
-                                        onClick = {
-                                            if (!isConnected && !isConnecting) {
-                                                onConnectBt(device)
+                                    // 💡 修正 2：只針對「藍色燈號（已綁定歷史裝置）」解鎖 Swipe 左右滑動刪除功能，風格 100% 與 Wi-Fi 頁對齊！
+                                    if (isSaved) {
+                                        val dismissState = rememberSwipeToDismissBoxState(
+                                            confirmValueChange = { value ->
+                                                if (value == SwipeToDismissBoxValue.EndToStart) {
+                                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                                    btAddressToDelete = device.address
+                                                    btNameToDelete = deviceName
+                                                    false
+                                                } else false
                                             }
-                                        },
-                                        onLongClick = {
-                                            if (isConnected) {
-                                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                                onDisconnectBt()
+                                        )
+
+                                        SwipeToDismissBox(
+                                            state = dismissState,
+                                            enableDismissFromStartToEnd = false,
+                                            enableDismissFromEndToStart = true,
+                                            backgroundContent = {
+                                                val color by animateColorAsState(
+                                                    when (dismissState.targetValue) {
+                                                        SwipeToDismissBoxValue.EndToStart -> Color(0xFFEF5350)
+                                                        else -> Color.Transparent
+                                                    }, label = "dismiss_bt_bg"
+                                                )
+                                                Box(
+                                                    modifier = Modifier
+                                                        .fillMaxSize()
+                                                        .clip(RoundedCornerShape(8.dp))
+                                                        .background(color)
+                                                        .padding(horizontal = 16.dp),
+                                                    contentAlignment = Alignment.CenterEnd
+                                                ) {
+                                                    Text(stringResource(R.string.dialog_unpair), color = Color.White, style = MaterialTheme.typography.bodyMedium)
+                                                }
                                             }
+                                        ) {
+                                            DeviceRow(
+                                                name = deviceName,
+                                                subtitle = statusSubtitle,
+                                                dotColor = dotColor,
+                                                onClick = {
+                                                    if (!isConnected && !isConnecting) {
+                                                        onConnectBt(device)
+                                                    }
+                                                },
+                                                onLongClick = {
+                                                    if (isConnected) {
+                                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                                        onDisconnectBt()
+                                                    }
+                                                }
+                                            )
                                         }
-                                    )
+                                    } else {
+                                        // 灰燈設備（其他耳機手錶）不解鎖左滑刪除，保持極簡
+                                        DeviceRow(
+                                            name = deviceName,
+                                            subtitle = statusSubtitle,
+                                            dotColor = dotColor,
+                                            onClick = {
+                                                if (!isConnected && !isConnecting) {
+                                                    onConnectBt(device)
+                                                }
+                                            },
+                                            onLongClick = {
+                                                if (isConnected) {
+                                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                                    onDisconnectBt()
+                                                }
+                                            }
+                                        )
+                                    }
                                 }
                             }
                         }

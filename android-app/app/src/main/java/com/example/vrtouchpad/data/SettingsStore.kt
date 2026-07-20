@@ -26,4 +26,7 @@ class SettingsStore(context: Context) {
     var lastConnectedBtAddress: String?
         get() = prefs.getString("last_connected_bt_address", null)
         set(value) = prefs.edit().putString("last_connected_bt_address", value).apply()
+    var savedBtDevices: String
+        get() = prefs.getString("saved_bt_devices", "[]") ?: "[]"
+        set(value) = prefs.edit().putString("saved_bt_devices", value).apply()
 }

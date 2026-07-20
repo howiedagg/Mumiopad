@@ -24,7 +24,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp // 💡 補上 sp 導入，用於極簡 glyph 圖示
+import androidx.compose.ui.unit.sp
 import com.example.vrtouchpad.R
 import com.example.vrtouchpad.data.DiscoveredServer
 import com.example.vrtouchpad.network.ConnState
@@ -46,18 +46,18 @@ fun WelcomeOnboarding(
     btBondedDevices: List<BluetoothDevice>,
     btConnState: ConnState,
     onConnectBt: (BluetoothDevice) -> Unit,
-    // 💡 修正 1：傳入首次開卡標記與當前模式
     isFirstLaunch: Boolean,
-    connectionMode: ConnectionMode
+    connectionMode: ConnectionMode,
+    // 💡 藍牙專屬新增
+    savedBtAddresses: Set<String>,
+    connectedBtAddress: String?
 ) {
-    // 💡 修正 2：初始化邏輯。若非首次開卡，直接切入對應的引導頁，徹底消滅切換時的中斷感！
     var selectedPath by remember {
         mutableStateOf<ConnectionMode?>(
             if (isFirstLaunch) null else connectionMode
         )
     }
 
-    // 💡 修正 3：當在 Dialog 中點擊切換模式時，同步更新 Onboarding 引導頁路由
     LaunchedEffect(connectionMode) {
         if (!isFirstLaunch) {
             selectedPath = connectionMode
@@ -77,7 +77,6 @@ fun WelcomeOnboarding(
             label = "onboarding_main_flow"
         ) { path ->
             when (path) {
-                // ================== 1. 首頁：純視覺雙正方形卡片 ==================
                 null -> {
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
@@ -95,7 +94,6 @@ fun WelcomeOnboarding(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(16.dp)
                         ) {
-                            // 📶 Wi-Fi 按鈕卡片 (1:1 正方形)
                             Box(
                                 modifier = Modifier
                                     .weight(1f)
@@ -120,7 +118,6 @@ fun WelcomeOnboarding(
                                 }
                             }
 
-                            // ᛒ 藍牙按鈕卡片 (1:1 正方形)
                             Box(
                                 modifier = Modifier
                                     .weight(1f)
@@ -148,7 +145,6 @@ fun WelcomeOnboarding(
                     }
                 }
 
-                // ================== 2. Wi-Fi 連線引導頁（維持原有自動重整極簡） ==================
                 ConnectionMode.WIFI -> {
                     AnimatedContent(
                         targetState = pairingNavState,
@@ -286,7 +282,6 @@ fun WelcomeOnboarding(
                     }
                 }
 
-                // ================== 3. 藍牙配對頁（徹底去除步驟文字說明，直覺極簡） ==================
                 ConnectionMode.BLUETOOTH -> {
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
@@ -300,7 +295,6 @@ fun WelcomeOnboarding(
                         )
                         Spacer(Modifier.height(32.dp))
 
-                        // 開放配對按鈕
                         Button(
                             onClick = onMakeBtDiscoverable,
                             modifier = Modifier.fillMaxWidth(),
@@ -311,7 +305,6 @@ fun WelcomeOnboarding(
 
                         Spacer(Modifier.height(32.dp))
 
-                        // 已配對裝置清單（視覺風格與 Wi-Fi 一致）
                         Text(stringResource(R.string.bt_bonded_devices_title), style = MaterialTheme.typography.titleSmall, color = Color.Gray)
                         Spacer(Modifier.height(8.dp))
 
@@ -322,13 +315,16 @@ fun WelcomeOnboarding(
                                 modifier = Modifier.fillMaxWidth().heightIn(max = 160.dp),
                                 verticalArrangement = Arrangement.spacedBy(6.dp)
                             ) {
-                                items(btBondedDevices) { device ->
+                                items(btBondedDevices, key = { it.address }) { device ->
                                     val isConnecting = btConnState == ConnState.CONNECTING
-                                    val isConnected = btConnState == ConnState.CONNECTED
+                                    val isConnected = btConnState == ConnState.CONNECTED && device.address == connectedBtAddress
+                                    val isSaved = savedBtAddresses.contains(device.address)
 
+                                    // 💡 修正：Onboarding 頁面同步套用四色指示燈，風格 100% 同一
                                     val dotColor = when {
                                         isConnected -> Color(0xFF4CAF50)
                                         isConnecting -> Color(0xFFFFA000)
+                                        isSaved -> Color(0xFF42A5F5) // 藍色配對歷史
                                         else -> Color(0xFF757575)
                                     }
 
@@ -360,25 +356,5 @@ fun WelcomeOnboarding(
                 }
             }
         }
-    }
-}
-
-@Composable
-private fun OnboardingChoiceCard(
-    title: String,
-    description: String,
-    onClick: () -> Unit
-) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
-            .background(Color(0xFF2D2D2D))
-            .clickable { onClick() }
-            .padding(20.dp)
-    ) {
-        Text(title, style = MaterialTheme.typography.titleMedium, color = Color.White)
-        Spacer(Modifier.height(6.dp))
-        Text(description, style = MaterialTheme.typography.bodySmall, color = Color.LightGray)
     }
 }
