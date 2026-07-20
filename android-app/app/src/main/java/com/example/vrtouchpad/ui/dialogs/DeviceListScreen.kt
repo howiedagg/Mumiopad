@@ -1,8 +1,11 @@
+// D:/howie/Documents/vr-touchpad-app/vr-touchpad-app/android-app/app/src/main/java/com/example/vrtouchpad/ui/dialogs/DeviceListScreen.kt
+
 package com.example.vrtouchpad.ui.dialogs
 
 import android.annotation.SuppressLint
 import android.bluetooth.BluetoothDevice
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -58,6 +61,7 @@ fun DeviceListScreen(
 
     val haptic = LocalHapticFeedback.current
 
+    // 💡 統一規範：Wi-Fi 歷史設備動態排序（🟢 已連線 -> 🔵 線上 -> ⚪ 離線）
     val sortedSavedServers = remember(savedServers, connectedUuid, onlineSavedUuids) {
         savedServers.sortedWith(compareByDescending<SavedServer> { server ->
             server.uuid == connectedUuid
@@ -66,6 +70,7 @@ fun DeviceListScreen(
         })
     }
 
+    // 💡 統一規範：藍牙設備動態排序（🟢 已連線 -> 🟡 連線中 -> 🔵 歷史保存 -> ⚪ 灰燈其他設備）
     val sortedBtDevices = remember(btBondedDevices, connectedUuid, savedBtAddresses) {
         btBondedDevices.sortedWith(compareByDescending<BluetoothDevice> { device ->
             device.address == connectedUuid
@@ -122,7 +127,6 @@ fun DeviceListScreen(
             ) {
                 Text(stringResource(R.string.dialog_select_computer))
 
-                // 💡 修正：不再使用 connectionMode 進行限制。不論哪種模式，只要處於 isScanning 狀態就轉圈
                 val showProgress = isScanning
 
                 if (showProgress) {
@@ -211,9 +215,9 @@ fun DeviceListScreen(
                                 val isOnline = onlineSavedUuids.contains(server.uuid)
 
                                 val dotColor = when {
-                                    isConnected -> Color(0xFF4CAF50)
-                                    isOnline -> Color(0xFF42A5F5)
-                                    else -> Color(0xFF757575)
+                                    isConnected -> Color(0xFF4CAF50) // 🟢 綠燈：已連線
+                                    isOnline -> Color(0xFF42A5F5)    // 🔵 藍燈：在線
+                                    else -> Color(0xFF757575)        // ⚪ 灰燈：離線
                                 }
 
                                 val subtitle = when {
@@ -274,7 +278,7 @@ fun DeviceListScreen(
                                 DeviceRow(
                                     name = displayName,
                                     subtitle = stringResource(R.string.dialog_unpaired),
-                                    dotColor = Color(0xFFFFA000),
+                                    dotColor = Color(0xFF757575), // ⚪ 灰燈：新發現「未配對」設備統一改為灰色符合規範
                                     onClick = { onStartPairing(server) }
                                 )
                             }
@@ -282,16 +286,6 @@ fun DeviceListScreen(
                     }
                 } else {
                     Column(modifier = Modifier.fillMaxWidth()) {
-
-                        Button(
-                            onClick = onMakeBtDiscoverable,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(bottom = 16.dp),
-                            shape = RoundedCornerShape(12.dp)
-                        ) {
-                            Text(stringResource(R.string.bt_make_discoverable), style = MaterialTheme.typography.bodyMedium)
-                        }
 
                         Text(stringResource(R.string.bt_bonded_devices_title), style = MaterialTheme.typography.titleSmall, color = Color.Gray)
                         Spacer(Modifier.height(6.dp))
@@ -302,16 +296,15 @@ fun DeviceListScreen(
                             LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 200.dp)) {
                                 items(sortedBtDevices, key = { it.address }) { device ->
                                     val isTarget = device.address == connectedUuid
-
                                     val isConnected = isTarget && btConnState == com.example.vrtouchpad.network.ConnState.CONNECTED
                                     val isConnecting = isTarget && btConnState == com.example.vrtouchpad.network.ConnState.CONNECTING
                                     val isSaved = savedBtAddresses.contains(device.address)
 
                                     val dotColor = when {
-                                        isConnected -> Color(0xFF4CAF50)
-                                        isConnecting -> Color(0xFFFFA000)
-                                        isSaved -> Color(0xFF42A5F5)
-                                        else -> Color(0xFF757575)
+                                        isConnected -> Color(0xFF4CAF50)   // 🟢 綠燈：已連線
+                                        isConnecting -> Color(0xFFFFA000)  // 🟡 橘燈：連線中...
+                                        isSaved -> Color(0xFF42A5F5)       // 🔵 藍燈：歷史配對裝置
+                                        else -> Color(0xFF757575)          // ⚪ 灰燈：未配對裝置
                                     }
 
                                     @SuppressLint("MissingPermission")
@@ -320,8 +313,8 @@ fun DeviceListScreen(
                                     val statusSubtitle = when {
                                         isConnected -> stringResource(R.string.status_connected)
                                         isConnecting -> stringResource(R.string.status_connecting_dots)
-                                        isSaved -> stringResource(R.string.status_disconnected)
-                                        else -> stringResource(R.string.dialog_unpaired)
+                                        isSaved -> stringResource(R.string.status_disconnected) // 藍燈 -> 未連線
+                                        else -> stringResource(R.string.dialog_unpaired)       // 灰燈 -> 未配對
                                     }
 
                                     if (isSaved) {
@@ -396,6 +389,20 @@ fun DeviceListScreen(
                                     }
                                 }
                             }
+                        }
+
+                        // 💡 方案 B：配對按鈕從頂部移除，改為列表下方的「次要框線按鈕」（OutlinedButton）
+                        Spacer(Modifier.height(16.dp))
+                        OutlinedButton(
+                            onClick = onMakeBtDiscoverable,
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp),
+                            border = BorderStroke(1.dp, Color(0xFF555555)),
+                            colors = ButtonDefaults.outlinedButtonColors(
+                                contentColor = Color.LightGray
+                            )
+                        ) {
+                            Text(stringResource(R.string.bt_make_discoverable), style = MaterialTheme.typography.bodyMedium)
                         }
                     }
                 }

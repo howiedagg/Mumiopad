@@ -57,7 +57,7 @@ fun WelcomeOnboarding(
         )
     }
 
-    // 💡 修正 1：排序依據改為當前 target 設備（不論連線中或已連線）都排在最上方
+    // 💡 統一規範：設備動態排序（🟢 已連線 -> 🟡 連線中 -> 🔵 歷史保存 -> ⚪ 未配對裝置）
     val sortedBtDevices = remember(btBondedDevices, connectedBtAddress, savedBtAddresses) {
         btBondedDevices.sortedWith(compareByDescending<BluetoothDevice> { device ->
             device.address == connectedBtAddress
@@ -260,7 +260,7 @@ fun WelcomeOnboarding(
                                                         modifier = Modifier
                                                             .size(8.dp)
                                                             .clip(CircleShape)
-                                                            .background(Color(0xFFFFA000))
+                                                            .background(Color(0xFF757575)) // ⚪ 灰燈：符合規範
                                                     )
                                                     Spacer(Modifier.width(16.dp))
                                                     Column {
@@ -324,16 +324,15 @@ fun WelcomeOnboarding(
                                 verticalArrangement = Arrangement.spacedBy(6.dp)
                             ) {
                                 items(sortedBtDevices, key = { it.address }) { device ->
-                                    // 💡 修正 2：判定是否為連線目標，解耦狀態以防止全體閃爍
                                     val isTarget = device.address == connectedBtAddress
                                     val isConnected = btConnState == ConnState.CONNECTED && isTarget
                                     val isConnecting = btConnState == ConnState.CONNECTING && isTarget
                                     val isSaved = savedBtAddresses.contains(device.address)
 
                                     val dotColor = when {
-                                        isConnected -> Color(0xFF4CAF50)   // 🟢 綠燈：僅目標設備已連線
-                                        isConnecting -> Color(0xFFFFA000)  // 🟡 橘燈：僅目標設備正在連線中
-                                        isSaved -> Color(0xFF42A5F5)       // 🔵 藍燈：歷史配對裝置
+                                        isConnected -> Color(0xFF4CAF50)   // 🟢 綠燈：已連線
+                                        isConnecting -> Color(0xFFFFA000)  // 🟡 橘燈：連線中
+                                        isSaved -> Color(0xFF42A5F5)       // 🔵 藍燈：歷史配對
                                         else -> Color(0xFF757575)          // ⚪ 灰燈：未配對
                                     }
 

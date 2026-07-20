@@ -1,3 +1,5 @@
+// D:/howie/Documents/vr-touchpad-app/vr-touchpad-app/android-app/app/src/main/java/com/example/vrtouchpad/ui/components/StatusBar.kt
+
 package com.example.vrtouchpad.ui.components
 
 import androidx.compose.foundation.background
@@ -9,6 +11,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding // 💡 引入 statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.MaterialTheme
@@ -36,6 +39,7 @@ fun StatusBar(
     Row(
         Modifier
             .fillMaxWidth()
+            .statusBarsPadding() // 💡 關鍵修正：當背景融入最上方時，此按鈕欄會自動向下保留與實體瀏海、狀態列等高的安全距離
             .padding(horizontal = 16.dp, vertical = 8.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,

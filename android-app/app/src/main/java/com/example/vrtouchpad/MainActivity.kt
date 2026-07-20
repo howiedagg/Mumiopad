@@ -1,3 +1,4 @@
+// D:/howie/Documents/vr-touchpad-app/vr-touchpad-app/android-app/app/src/main/java/com/example/vrtouchpad/MainActivity.kt
 package com.example.vrtouchpad
 
 import android.Manifest
@@ -6,14 +7,17 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Bundle
 import android.view.KeyEvent
+import android.view.WindowManager // 💡 引入 WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
-import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.enableEdgeToEdge // 💡 引入 Edge-to-Edge
+import androidx.activity.result.contract.ActivityResultContracts // 💡 補回這一行即可修正錯誤！
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.navigationBarsPadding // 💡 引入底部導覽列避讓
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -94,6 +98,19 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // 💡 1. 啟用螢幕恆亮（只要 App 還在前景運作，手機就不會自動休眠黑屏）
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+
+        // 💡 2. 啟用滿版沉浸式設計，並指定「暗色狀態列（顯示白色文字）」確保 Mumiopad 的深灰色背景能融入最頂端
+        enableEdgeToEdge(
+            statusBarStyle = androidx.activity.SystemBarStyle.dark(
+                android.graphics.Color.TRANSPARENT
+            ),
+            navigationBarStyle = androidx.activity.SystemBarStyle.dark(
+                android.graphics.Color.TRANSPARENT
+            )
+        )
+
         super.onCreate(savedInstanceState)
         window.setBackgroundDrawable(0xFF1E1E1E.toInt().toDrawable())
         checkAndRequestPermissions()
@@ -196,6 +213,7 @@ fun AppRoot(viewModel: TouchpadViewModel) {
         if (isKeyboardActive) {
             viewModel.setKeyboardActive(false)
         } else {
+            // 💡 之前修正過的分流版本，統一透過 ViewModel 轉發
             viewModel.sendKeypress("BROWSER_BACK")
         }
     }
@@ -241,7 +259,8 @@ fun AppRoot(viewModel: TouchpadViewModel) {
 
             if (showOnboarding) {
                 WelcomeOnboarding(
-                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                    // 💡 額外加上 navigationBarsPadding()，防範底部「返回」按鈕被系統的三鍵虛擬導覽列或手勢條遮擋
+                    modifier = Modifier.weight(1f).fillMaxWidth().navigationBarsPadding(),
                     unpairedDiscovered = unpairedDiscovered,
                     isScanning = isScanning,
                     pairingError = pairingError,
@@ -295,6 +314,8 @@ fun AppRoot(viewModel: TouchpadViewModel) {
                 onDeleteSaved = { uuid -> viewModel.deleteServer(uuid) },
                 onDisconnect = { viewModel.disconnect() },
                 onStartPairing = { server -> viewModel.triggerPairing(server) },
+
+                // 💡 之前修正過的藍牙/Wi-Fi 動態重整分流
                 onRescan = {
                     if (connectionMode == ConnectionMode.BLUETOOTH) {
                         viewModel.refreshBtDevicesWithSpinner()
@@ -302,6 +323,7 @@ fun AppRoot(viewModel: TouchpadViewModel) {
                         viewModel.startPairingScan(clearExisting = true)
                     }
                 },
+
                 onBackToList = { viewModel.cancelPairing() },
                 onDismiss = { viewModel.closeServerSelector() },
                 btBondedDevices = btBondedDevices,
