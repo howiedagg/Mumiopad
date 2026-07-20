@@ -1,66 +1,68 @@
-# Mumiopad - Minimalist Dual-Mode Wireless Touchpad
+# Mumiopad - Minimalist Wireless Touchpad
 
-Control your PC with ease, right from the comfort of your couch.
+Control your PC, even while lying down.
 
-**Mumiopad** is a minimalist dual-mode wireless touchpad and virtual keyboard. Supporting both **Wi-Fi local network** and **driver-free Bluetooth (Bluetooth HID)**, it turns your Android phone into a mouse and keyboard, making remote control effortless whether you are relaxing on the couch, watching a movie, or giving a presentation.
+🌐 **[繁體中文](README_zh.md)**
 
-👉 **[Download Latest Release (APK / EXE)](https://github.com/howiedagg/Mumiopad/releases)**
+**Mumiopad** is a minimalist dual-mode wireless touchpad and virtual keyboard. Supporting **local Wi-Fi** and **Bluetooth HID (driverless)**, it turns your Android phone into a mouse and keyboard—giving you effortless remote control from your sofa, bed, or during presentations.
+
+👉 **[Download Latest Version (APK / EXE)](https://github.com/howiedagg/Mumiopad/releases)**
 
 ---
 
-## 📥 Quick Connection
+## 📥 Quick Start
 
 ### 📶 Wi-Fi Mode
-1. **PC**: Launch `MumiopadServer.exe`.
-2. **Phone**: Connect to the same Wi-Fi and open the app.
-3. **Connect**: Tap your computer's name and click "Yes" on the pop-up window on your PC.
+1. **PC**: Run `MumiopadServer.exe`.
+2. **Android**: Connect to the same Wi-Fi and open the app.
+3. **Connect**: Tap your PC, and click "Yes" on the Windows dialog.
 
-### ᛒ Bluetooth Mode (Driver-Free)
-1. **Phone**: Open the app, switch to Bluetooth, and tap "Enable Bluetooth Pairing".
-2. **PC**: Search for and pair **"Your Phone Name"** in Windows Bluetooth settings.
-3. **Connect**: Once successfully paired, tap your computer in the phone's device list to start controlling.
+### ᛒ Bluetooth Mode (Driverless)
+1. **Phone**: Open the app, switch to Bluetooth, and tap "Make Discoverable".
+2. **PC**: Search and pair with **"your phone's Bluetooth name"** in settings.
+3. **Connect**: Tap your PC in the app list to start control.
 
 ---
 
 ## 🎮 Touchpad Gestures
 
-| Finger Count | Action | Simulated Function |
-|--------------|--------|--------------------|
-| **Single Finger** | Swipe | Move cursor |
-| | Tap | Left-click |
-| | Hold 200ms & Drag | Select / Drag (Haptic lock vibration) |
-| **Two Fingers** | Tap | Right-click |
-| | Swipe Up/Down | Page scrolling (Fine scroll vibration) |
-| | Swipe Left/Right | Browser Back / Forward |
-| | Pinch | Windows Screen Magnifier (High-precision tick vibration) |
-| **Three Fingers** | Tap | Task View (`Win + Tab`) |
-| | Swipe Up/Down | **Show / Restore Desktop** (`Win + D`) |
-| | Swipe Left/Right | **Toggle / Open-Close Phone Virtual Keyboard** |
-| **Four Fingers** | Tap | Middle-click |
-| **Physical Keys** | Volume Keys | Control PC system volume |
+| Fingers | Action | Simulated Function |
+|----------|----------|-------------------|
+| **1 Finger** | Move | Cursor Movement |
+| | Tap | Left Click |
+| | Hold 200ms & Drag | Drag & Drop (Tactile Haptic Lock) |
+| **2 Fingers** | Tap | Right Click |
+| | Vertical Slide | Scroll (Friction Haptic Feedback) |
+| | Horizontal Swipe | Browser Back / Forward |
+| | Pinch Zoom | Windows Magnifier (Precision Haptic Tick) |
+| **3 Fingers**| Tap | Task View (`Win + Tab`) |
+| | Slide Down / Up | **Minimize All / Restore Windows** (`Win + D`) |
+| | Slide Left / Right | **Toggle Virtual Keyboard** |
+| **4 Fingers** | Tap | Mouse Middle Click |
+| **Hardware Buttons** | Volume Keys | PC System Volume Control |
 
 ---
 
 ## 💡 Smart Connection
 
-* **Location Awareness**: Automatically binds to default computers under different Wi-Fi networks.
-* **One-Tap Dual-Mode**: Freely switch between Wi-Fi and Bluetooth.
-* **Multi-Device Quick Switch**: Supports pairing with multiple computers, allowing seamless switching directly from the menu.
+* **Location Awareness**: Automatically binds default PCs to specific Wi-Fi networks (BSSIDs).
+* **One-Tap Dual-Mode**: Switch freely between Wi-Fi and Bluetooth.
+* **Multi-Device**: Supports pairing multiple PCs; switch control seamlessly with a single tap.
 
 ---
 
-### Indicator Light Standards
+### Unified Status Indicators
 
 - 🟢 Green: Connected
 - 🟡 Orange: Connecting
-- 🔵 Blue: Paired and available
+- 🔵 Blue: Paired and ready
 - ⚪ Gray: Unpaired or offline
 
 ---
 
-## 🛠️ Development & Build
+## 🛠️ Build from Source
 
-### 1. PC Server Side (Python 3.10+)
+### 1. PC Server (Python 3.10+)
 
     cd pc-server-python
     python -m venv .venv
@@ -68,7 +70,7 @@ Control your PC with ease, right from the comfort of your couch.
     pip install -r requirements.txt
     python main.py
 
-Package to EXE:
+Build Standalone EXE:
 
     pyinstaller --onefile --noconsole --name MumiopadServer main.py
 
@@ -85,5 +87,5 @@ Build APK:
 
 ## 📄 License & Disclaimer
 
-- **Non-Commercial Restriction**: Free for personal, family, and academic use only. Any commercial monetization or packaged resale is strictly prohibited.
-- **Disclaimer**: This software is provided "as is", without warranty of any kind. The author assumes no responsibility for any equipment failure, system conflict, or data loss resulting from its use.
+- **Non-Commercial Use Only**: Free for personal, family, and educational use. Commercial redistribution, resale, paid unlocking, or bundling is prohibited.
+- **Disclaimer**: This software is provided "as is" without warranty of any kind. The author is not liable for any equipment failure, system conflicts, or data loss resulting from its use.
