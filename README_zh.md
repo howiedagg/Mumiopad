@@ -1,10 +1,10 @@
-# Mumiopad - 極簡雙模無線觸控板
+# Mumiopad - 簡單雙模無線觸控板
 
 控制電腦，躺著也能搞定。
 
 🌐 **[English](README.md)**
 
-**Mumiopad** 是一款極簡的雙模無線觸控板與虛擬鍵盤。支援 **Wi-Fi 區域網路**與**免驅動藍牙（Bluetooth HID）**，讓您的 Android 手機化身為滑鼠與鍵盤，無論是在沙發放鬆、觀影、簡報，遠端控制皆輕鬆自如。
+**Mumiopad** 是一款簡單的雙模無線觸控板與虛擬鍵盤。支援 **Wi-Fi 區域網路**與**免驅動藍牙（Bluetooth HID）**，讓您的 Android 手機化身為滑鼠與鍵盤，無論是在沙發放鬆、觀影、簡報，遠端控制皆輕鬆自如。
 
 👉 **[下載最新版本 (APK / EXE)](https://github.com/howiedagg/Mumiopad/releases)**
 

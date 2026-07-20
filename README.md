@@ -1,10 +1,10 @@
-# Mumiopad - Minimalist Wireless Touchpad
+# Mumiopad - Simple Wireless Touchpad
 
 Control your PC, even while lying down.
 
 🌐 **[繁體中文](README_zh.md)**
 
-**Mumiopad** is a minimalist dual-mode wireless touchpad and virtual keyboard. Supporting **local Wi-Fi** and **Bluetooth HID (driverless)**, it turns your Android phone into a mouse and keyboard—giving you effortless remote control from your sofa, bed, or during presentations.
+**Mumiopad** is a simple dual-mode wireless touchpad and virtual keyboard. Supporting **local Wi-Fi** and **Bluetooth HID (driverless)**, it turns your Android phone into a mouse and keyboard—giving you effortless remote control from your sofa, bed, or during presentations.
 
 👉 **[Download Latest Version (APK / EXE)](https://github.com/howiedagg/Mumiopad/releases)**
 
