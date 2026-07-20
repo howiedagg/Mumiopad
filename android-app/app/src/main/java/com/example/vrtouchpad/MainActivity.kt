@@ -295,7 +295,13 @@ fun AppRoot(viewModel: TouchpadViewModel) {
                 onDeleteSaved = { uuid -> viewModel.deleteServer(uuid) },
                 onDisconnect = { viewModel.disconnect() },
                 onStartPairing = { server -> viewModel.triggerPairing(server) },
-                onRescan = { viewModel.startPairingScan(clearExisting = true) },
+                onRescan = {
+                    if (connectionMode == ConnectionMode.BLUETOOTH) {
+                        viewModel.refreshBtDevicesWithSpinner()
+                    } else {
+                        viewModel.startPairingScan(clearExisting = true)
+                    }
+                },
                 onBackToList = { viewModel.cancelPairing() },
                 onDismiss = { viewModel.closeServerSelector() },
                 btBondedDevices = btBondedDevices,

@@ -48,7 +48,6 @@ fun WelcomeOnboarding(
     onConnectBt: (BluetoothDevice) -> Unit,
     isFirstLaunch: Boolean,
     connectionMode: ConnectionMode,
-    // 💡 藍牙專屬新增
     savedBtAddresses: Set<String>,
     connectedBtAddress: String?
 ) {
@@ -56,6 +55,15 @@ fun WelcomeOnboarding(
         mutableStateOf<ConnectionMode?>(
             if (isFirstLaunch) null else connectionMode
         )
+    }
+
+    // 💡 修正 1：排序依據改為當前 target 設備（不論連線中或已連線）都排在最上方
+    val sortedBtDevices = remember(btBondedDevices, connectedBtAddress, savedBtAddresses) {
+        btBondedDevices.sortedWith(compareByDescending<BluetoothDevice> { device ->
+            device.address == connectedBtAddress
+        }.thenByDescending { device ->
+            savedBtAddresses.contains(device.address)
+        })
     }
 
     LaunchedEffect(connectionMode) {
@@ -308,24 +316,25 @@ fun WelcomeOnboarding(
                         Text(stringResource(R.string.bt_bonded_devices_title), style = MaterialTheme.typography.titleSmall, color = Color.Gray)
                         Spacer(Modifier.height(8.dp))
 
-                        if (btBondedDevices.isEmpty()) {
+                        if (sortedBtDevices.isEmpty()) {
                             Text(stringResource(R.string.bt_no_bonded_devices), style = MaterialTheme.typography.bodyMedium, color = Color.DarkGray)
                         } else {
                             LazyColumn(
                                 modifier = Modifier.fillMaxWidth().heightIn(max = 160.dp),
                                 verticalArrangement = Arrangement.spacedBy(6.dp)
                             ) {
-                                items(btBondedDevices, key = { it.address }) { device ->
-                                    val isConnecting = btConnState == ConnState.CONNECTING
-                                    val isConnected = btConnState == ConnState.CONNECTED && device.address == connectedBtAddress
+                                items(sortedBtDevices, key = { it.address }) { device ->
+                                    // 💡 修正 2：判定是否為連線目標，解耦狀態以防止全體閃爍
+                                    val isTarget = device.address == connectedBtAddress
+                                    val isConnected = btConnState == ConnState.CONNECTED && isTarget
+                                    val isConnecting = btConnState == ConnState.CONNECTING && isTarget
                                     val isSaved = savedBtAddresses.contains(device.address)
 
-                                    // 💡 修正：Onboarding 頁面同步套用四色指示燈，風格 100% 同一
                                     val dotColor = when {
-                                        isConnected -> Color(0xFF4CAF50)
-                                        isConnecting -> Color(0xFFFFA000)
-                                        isSaved -> Color(0xFF42A5F5) // 藍色配對歷史
-                                        else -> Color(0xFF757575)
+                                        isConnected -> Color(0xFF4CAF50)   // 🟢 綠燈：僅目標設備已連線
+                                        isConnecting -> Color(0xFFFFA000)  // 🟡 橘燈：僅目標設備正在連線中
+                                        isSaved -> Color(0xFF42A5F5)       // 🔵 藍燈：歷史配對裝置
+                                        else -> Color(0xFF757575)          // ⚪ 灰燈：未配對
                                     }
 
                                     @SuppressLint("MissingPermission")

@@ -224,7 +224,11 @@ class TouchpadViewModel(
         connState,
         _connectionMode
     ) { state, mode ->
-        if (state == ConnState.CONNECTED && mode == ConnectionMode.BLUETOOTH) btClient.connectedDevice?.address else null
+        if (mode == ConnectionMode.BLUETOOTH && (state == ConnState.CONNECTED || state == ConnState.CONNECTING)) {
+            btClient.connectedDevice?.address
+        } else {
+            null
+        }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
     init {
@@ -309,6 +313,15 @@ class TouchpadViewModel(
         _btBondedDevices.value = rawDevices.sortedByDescending { history.contains(it.address) }
     }
 
+    fun refreshBtDevicesWithSpinner() {
+        viewModelScope.launch {
+            _isScanning.value = true
+            refreshBtDevices() // 瞬間完成讀取
+            delay(5000)         // 💡 故意延遲 600 毫秒，讓載入進度條轉一下提供反饋
+            _isScanning.value = false
+        }
+    }
+
     fun connectBluetooth(device: android.bluetooth.BluetoothDevice) {
         btClient.connect(device)
     }
@@ -356,7 +369,7 @@ class TouchpadViewModel(
             wsClient.close()
             wifiPerformanceManager.release()
             btClient.open()
-            refreshBtDevices()
+            refreshBtDevicesWithSpinner() // 💡 切換到藍牙模式時，自動觸發 600ms 旋轉動畫
         } else {
             btClient.close()
             _unpairedDiscovered.value = emptyList()
@@ -525,8 +538,11 @@ class TouchpadViewModel(
         pendingPairServer = null
         refreshServerLists()
         _pairingNavState.value = PairingNavState.DeviceList
+
         if (_connectionMode.value == ConnectionMode.WIFI) {
             startPairingScan()
+        } else {
+            refreshBtDevicesWithSpinner() // 💡 點開彈窗時，自動觸發 600ms 旋轉動畫
         }
     }
 

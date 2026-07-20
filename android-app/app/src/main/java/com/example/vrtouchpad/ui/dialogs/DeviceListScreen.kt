@@ -1,5 +1,3 @@
-// D:/howie/Documents/vr-touchpad-app/vr-touchpad-app/android-app/app/src/main/java/com/example/vrtouchpad/ui/dialogs/DeviceListScreen.kt
-
 package com.example.vrtouchpad.ui.dialogs
 
 import android.annotation.SuppressLint
@@ -47,21 +45,34 @@ fun DeviceListScreen(
     onStartPairing: (DiscoveredServer) -> Unit,
     onRescan: () -> Unit,
     onDismiss: () -> Unit,
-    // 💡 藍牙所需新參數
     btBondedDevices: List<BluetoothDevice>,
     btConnState: com.example.vrtouchpad.network.ConnState,
     onConnectBt: (BluetoothDevice) -> Unit,
     onDisconnectBt: () -> Unit,
     onMakeBtDiscoverable: () -> Unit,
-    savedBtAddresses: Set<String> // 💡 新增：已儲存的藍牙地址
+    savedBtAddresses: Set<String>
 ) {
-    // 💡 修正：歷史刪除彈窗將「SavedServer?」改為統一的地址或設備，
-    // 為求最乾淨的低耦合，我們直接使用字串與名稱。
     var btAddressToDelete by remember { mutableStateOf<String?>(null) }
     var btNameToDelete by remember { mutableStateOf("") }
     var serverToDelete by remember { mutableStateOf<SavedServer?>(null) }
 
     val haptic = LocalHapticFeedback.current
+
+    val sortedSavedServers = remember(savedServers, connectedUuid, onlineSavedUuids) {
+        savedServers.sortedWith(compareByDescending<SavedServer> { server ->
+            server.uuid == connectedUuid
+        }.thenByDescending { server ->
+            onlineSavedUuids.contains(server.uuid)
+        })
+    }
+
+    val sortedBtDevices = remember(btBondedDevices, connectedUuid, savedBtAddresses) {
+        btBondedDevices.sortedWith(compareByDescending<BluetoothDevice> { device ->
+            device.address == connectedUuid
+        }.thenByDescending { device ->
+            savedBtAddresses.contains(device.address)
+        })
+    }
 
     if (serverToDelete != null) {
         AlertDialog(
@@ -82,7 +93,6 @@ fun DeviceListScreen(
         )
     }
 
-    // 💡 新增：藍牙左滑解綁確認對話框
     if (btAddressToDelete != null) {
         AlertDialog(
             onDismissRequest = { btAddressToDelete = null },
@@ -91,7 +101,7 @@ fun DeviceListScreen(
             confirmButton = {
                 TextButton(
                     onClick = {
-                        btAddressToDelete?.let { onDeleteSaved(it) } // 統一由 ViewModel 的刪除接口分流處理
+                        btAddressToDelete?.let { onDeleteSaved(it) }
                         btAddressToDelete = null
                     }
                 ) { Text(stringResource(R.string.dialog_confirm), color = Color(0xFFEF5350)) }
@@ -111,28 +121,30 @@ fun DeviceListScreen(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(stringResource(R.string.dialog_select_computer))
-                if (connectionMode == ConnectionMode.WIFI) {
-                    if (isScanning) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(20.dp),
-                            strokeWidth = 2.dp,
-                            color = MaterialTheme.colorScheme.primary
+
+                // 💡 修正：不再使用 connectionMode 進行限制。不論哪種模式，只要處於 isScanning 狀態就轉圈
+                val showProgress = isScanning
+
+                if (showProgress) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(20.dp),
+                        strokeWidth = 2.dp,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                } else {
+                    IconButton(
+                        onClick = {
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            onRescan()
+                        },
+                        modifier = Modifier.size(24.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Refresh,
+                            contentDescription = stringResource(R.string.dialog_refresh),
+                            tint = Color.Gray,
+                            modifier = Modifier.size(18.dp)
                         )
-                    } else {
-                        IconButton(
-                            onClick = {
-                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                onRescan()
-                            },
-                            modifier = Modifier.size(24.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Refresh,
-                                contentDescription = stringResource(R.string.dialog_refresh),
-                                tint = Color.Gray,
-                                modifier = Modifier.size(18.dp)
-                            )
-                        }
                     }
                 }
             }
@@ -140,7 +152,6 @@ fun DeviceListScreen(
         text = {
             Column(modifier = Modifier.fillMaxWidth()) {
 
-                // 頂部雙模切換膠囊
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -161,7 +172,6 @@ fun DeviceListScreen(
                             .padding(vertical = 8.dp),
                         contentAlignment = Alignment.Center
                     ) {
-                        // 💡 改用 stringResource 讀取 Wi-Fi 語系文字
                         Text(
                             text = stringResource(R.string.onboarding_choice_wifi),
                             color = if (isWifi) Color.White else Color.Gray,
@@ -178,7 +188,6 @@ fun DeviceListScreen(
                             .padding(vertical = 8.dp),
                         contentAlignment = Alignment.Center
                     ) {
-                        // 💡 改用 stringResource 讀取 藍牙 語系文字
                         Text(
                             text = stringResource(R.string.onboarding_choice_bluetooth),
                             color = if (!isWifi) Color.White else Color.Gray,
@@ -187,10 +196,8 @@ fun DeviceListScreen(
                     }
                 }
 
-                // 名單分流
                 if (connectionMode == ConnectionMode.WIFI) {
-                    // --- Wi-Fi 模式名冊 ---
-                    val hasAny = savedServers.isNotEmpty() || unpairedDiscovered.isNotEmpty()
+                    val hasAny = sortedSavedServers.isNotEmpty() || unpairedDiscovered.isNotEmpty()
                     if (!hasAny) {
                         Text(
                             text = if (isScanning) stringResource(R.string.dialog_scanning) else stringResource(R.string.dialog_no_devices),
@@ -199,7 +206,7 @@ fun DeviceListScreen(
                         )
                     } else {
                         LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 240.dp)) {
-                            items(savedServers, key = { it.uuid }) { server ->
+                            items(sortedSavedServers, key = { it.uuid }) { server ->
                                 val isConnected = server.uuid == connectedUuid
                                 val isOnline = onlineSavedUuids.contains(server.uuid)
 
@@ -274,7 +281,6 @@ fun DeviceListScreen(
                         }
                     }
                 } else {
-                    // --- 藍牙模式名冊 ---
                     Column(modifier = Modifier.fillMaxWidth()) {
 
                         Button(
@@ -290,32 +296,34 @@ fun DeviceListScreen(
                         Text(stringResource(R.string.bt_bonded_devices_title), style = MaterialTheme.typography.titleSmall, color = Color.Gray)
                         Spacer(Modifier.height(6.dp))
 
-                        if (btBondedDevices.isEmpty()) {
+                        if (sortedBtDevices.isEmpty()) {
                             Text(stringResource(R.string.bt_no_bonded_devices), style = MaterialTheme.typography.bodyMedium, color = Color.DarkGray)
                         } else {
                             LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 200.dp)) {
-                                items(btBondedDevices, key = { it.address }) { device ->
-                                    val isConnected = device.address == connectedUuid
-                                    val isConnecting = !isConnected && btConnState == com.example.vrtouchpad.network.ConnState.CONNECTING
+                                items(sortedBtDevices, key = { it.address }) { device ->
+                                    val isTarget = device.address == connectedUuid
+
+                                    val isConnected = isTarget && btConnState == com.example.vrtouchpad.network.ConnState.CONNECTED
+                                    val isConnecting = isTarget && btConnState == com.example.vrtouchpad.network.ConnState.CONNECTING
                                     val isSaved = savedBtAddresses.contains(device.address)
 
-                                    // 💡 修正 1：依據物理狀態與歷史名單，分流四色燈號！
                                     val dotColor = when {
-                                        isConnected -> Color(0xFF4CAF50)   // 🟢 綠燈：連線中
-                                        isConnecting -> Color(0xFFFFA000)  // 🟡 橘燈：嘗試中
-                                        isSaved -> Color(0xFF42A5F5)       // 🔵 藍燈：配對/成功連線過的歷史設備！
-                                        else -> Color(0xFF757575)          // ⚪ 灰燈：其他無關系統藍牙裝置（如耳機）
+                                        isConnected -> Color(0xFF4CAF50)
+                                        isConnecting -> Color(0xFFFFA000)
+                                        isSaved -> Color(0xFF42A5F5)
+                                        else -> Color(0xFF757575)
                                     }
 
                                     @SuppressLint("MissingPermission")
                                     val deviceName = device.name ?: stringResource(R.string.bt_unknown_device)
+
                                     val statusSubtitle = when {
                                         isConnected -> stringResource(R.string.status_connected)
                                         isConnecting -> stringResource(R.string.status_connecting_dots)
-                                        else -> stringResource(R.string.status_disconnected)
+                                        isSaved -> stringResource(R.string.status_disconnected)
+                                        else -> stringResource(R.string.dialog_unpaired)
                                     }
 
-                                    // 💡 修正 2：只針對「藍色燈號（已綁定歷史裝置）」解鎖 Swipe 左右滑動刪除功能，風格 100% 與 Wi-Fi 頁對齊！
                                     if (isSaved) {
                                         val dismissState = rememberSwipeToDismissBoxState(
                                             confirmValueChange = { value ->
@@ -369,7 +377,6 @@ fun DeviceListScreen(
                                             )
                                         }
                                     } else {
-                                        // 灰燈設備（其他耳機手錶）不解鎖左滑刪除，保持極簡
                                         DeviceRow(
                                             name = deviceName,
                                             subtitle = statusSubtitle,

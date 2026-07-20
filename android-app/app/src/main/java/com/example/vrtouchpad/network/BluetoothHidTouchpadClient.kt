@@ -390,6 +390,20 @@ class BluetoothHidTouchpadClient(private val context: Context) : ConnectionClien
         }
     }
 
+    // 1. 新增一個內部斷開的方法（避免操作 connectJob，防止新協程自我取消）
+    @SuppressLint("MissingPermission")
+    private fun disconnectHostInternal() {
+        val hid = mHidDevice
+        val host = mHostDevice
+        if (hid != null && host != null) {
+            hid.disconnect(host)
+            mHostDevice = null
+            _connState.value = ConnState.DISCONNECTED
+            Log.d("BT_HID", "已透過內部程序中斷舊連線，狀態重設為 DISCONNECTED")
+        }
+    }
+
+    // 2. 修改後的 connect 方法
     @SuppressLint("MissingPermission")
     fun connect(device: BluetoothDevice) {
         val hid = mHidDevice
@@ -397,16 +411,28 @@ class BluetoothHidTouchpadClient(private val context: Context) : ConnectionClien
             val connectedDevices = hid.getDevicesMatchingConnectionStates(
                 intArrayOf(BluetoothProfile.STATE_CONNECTED)
             )
+            // 如果目標連線對象本來就已經處於連線狀態，則不重複發起連線
             if (connectedDevices.any { it.address == device.address }) {
-                Log.d("BT_HID", "Already connected")
+                Log.d("BT_HID", "目標裝置已在連線狀態中")
                 mHostDevice = device
                 _connState.value = ConnState.CONNECTED
                 return
             }
 
+            // 先取消上一次可能還在嘗試連線的背景任務
             connectJob?.cancel()
 
+            // 💡 關鍵修正：若目前有其他裝置在連線中、或狀態判定為 CONNECTED，則先執行斷線與重設
+            if (connectedDevices.isNotEmpty() || mHostDevice != null || _connState.value == ConnState.CONNECTED) {
+                Log.d("BT_HID", "偵測到切換裝置需求：主動斷開舊裝置，再連線至新裝置: ${device.address}")
+                disconnectHostInternal()
+                _connState.value = ConnState.DISCONNECTED // 🟢 強制重設狀態，確保底下的 while 迴圈能順利執行
+            }
+
             connectJob = clientScope.launch {
+                // 💡 給予藍牙晶片 500ms 的緩衝時間，處理斷線重置的硬體狀態
+                delay(500)
+
                 var success = false
                 var attempts = 0
                 val maxAttempts = 3
