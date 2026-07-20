@@ -1,5 +1,3 @@
-// D:/howie/Documents/vr-touchpad-app/vr-touchpad-app/android-app/app/src/main/java/com/example/vrtouchpad/network/WebSocketClient.kt
-
 package com.example.vrtouchpad.network
 
 import android.util.Log
@@ -43,10 +41,11 @@ private class NoDelaySocketFactory : SocketFactory() {
         Socket(address, port, localAddress, localPort).applyNoDelay()
 }
 
-class TouchpadWebSocketClient(
+class WebSocketClient(
     private val onPairSuccess: (token: String, pcName: String) -> Unit,
     private val onPairFail: (reason: String) -> Unit
-) {
+) : ConnectionClient {
+
     private var ws: WebSocket? = null
     private val client = OkHttpClient.Builder()
         .pingInterval(5, TimeUnit.SECONDS)
@@ -54,7 +53,7 @@ class TouchpadWebSocketClient(
         .build()
 
     private val _connState = MutableStateFlow(ConnState.DISCONNECTED)
-    val connState: StateFlow<ConnState> = _connState
+    override val connState: StateFlow<ConnState> = _connState
 
     private var isPairingMode = false
 
@@ -182,7 +181,7 @@ class TouchpadWebSocketClient(
         }
     }
 
-    fun sendEvent(event: TouchOutEvent) {
+    override fun sendEvent(event: TouchOutEvent) {
         val jsonStr = when (event) {
             is TouchOutEvent.Move ->
                 """{"type":"move","dx":${event.dx},"dy":${event.dy}}"""
@@ -211,11 +210,11 @@ class TouchpadWebSocketClient(
         }
     }
 
-    fun sendText(value: String) {
+    override fun sendText(value: String) {
         send(JSONObject().put("type", "text").put("value", value))
     }
 
-    fun sendKeypress(key: String) {
+    override fun sendKeypress(key: String) {
         send(JSONObject().put("type", "keypress").put("key", key))
     }
 
@@ -224,7 +223,7 @@ class TouchpadWebSocketClient(
         Log.d("WS_CLIENT", "已向 PC 發送註銷配對請求 (unpair)")
     }
 
-    fun close() {
+    override fun close() {
         ws?.close(1000, "bye")
         ws = null
         _connState.value = ConnState.DISCONNECTED

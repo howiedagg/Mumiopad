@@ -109,7 +109,7 @@ fun InvisibleKeyboardInput(
             keyboardOptions = KeyboardOptions(
                 capitalization = KeyboardCapitalization.None,
                 autoCorrect = false,
-                keyboardType = KeyboardType.Password,
+                keyboardType = KeyboardType.Text,
                 imeAction = ImeAction.Default
             ),
             textStyle = androidx.compose.ui.text.TextStyle(color = Color.Transparent)

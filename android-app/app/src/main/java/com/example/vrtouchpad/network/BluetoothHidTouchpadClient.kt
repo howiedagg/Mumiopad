@@ -1,5 +1,3 @@
-// D:/howie/Documents/vr-touchpad-app/vr-touchpad-app/android-app/app/src/main/java/com/example/vrtouchpad/network/BluetoothHidTouchpadClient.kt
-
 package com.example.vrtouchpad.network
 
 import android.annotation.SuppressLint
@@ -20,6 +18,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.util.concurrent.Executors
 
 class BluetoothHidTouchpadClient(private val context: Context) : ConnectionClient {
@@ -38,18 +38,17 @@ class BluetoothHidTouchpadClient(private val context: Context) : ConnectionClien
 
     private var mButtonState: Byte = 0x00
     private val clientScope = CoroutineScope(Dispatchers.Default + Job())
+    private var connectJob: Job? = null
+    private val keyboardMutex = Mutex() // 💡 新增：用於保護實體鍵盤時序序列，防止交錯與卡鍵
 
     private val HID_DESCRIPTOR_COMBO = intArrayOf(
-        // === 1. 標準滑鼠 (Report ID 1) ===
         0x05, 0x01, 0x09, 0x02, 0xa1, 0x01, 0x85, 0x01, 0x09, 0x01, 0xa1, 0x00, 0x05, 0x09, 0x19, 0x01,
         0x29, 0x03, 0x15, 0x00, 0x25, 0x01, 0x75, 0x01, 0x95, 0x03, 0x81, 0x02, 0x75, 0x05, 0x95, 0x01,
         0x81, 0x01, 0x05, 0x01, 0x09, 0x30, 0x09, 0x31, 0x09, 0x38, 0x15, 0x81, 0x25, 0x7f, 0x75, 0x08,
         0x95, 0x03, 0x81, 0x06, 0xc0, 0xc0,
-        // === 2. 標準鍵盤 (Report ID 2) ===
         0x05, 0x01, 0x09, 0x06, 0xa1, 0x01, 0x85, 0x02, 0x05, 0x07, 0x19, 0xe0, 0x29, 0xe7, 0x15, 0x00,
         0x25, 0x01, 0x75, 0x01, 0x95, 0x08, 0x81, 0x02, 0x95, 0x01, 0x75, 0x08, 0x81, 0x01, 0x95, 0x06,
         0x75, 0x08, 0x15, 0x00, 0x25, 0x65, 0x19, 0x00, 0x29, 0x65, 0x81, 0x00, 0xc0,
-        // === 3. 多媒體消費性按鍵 (Report ID 3) ===
         0x05, 0x0c, 0x09, 0x01, 0xa1, 0x01, 0x85, 0x03, 0x15, 0x00, 0x25, 0x01, 0x75, 0x01, 0x95, 0x03,
         0x09, 0xe9, 0x09, 0xea, 0x09, 0xe2, 0x81, 0x02, 0x95, 0x01, 0x75, 0x05, 0x81, 0x01, 0xc0
     ).map { it.toByte() }.toByteArray()
@@ -64,7 +63,6 @@ class BluetoothHidTouchpadClient(private val context: Context) : ConnectionClien
         override fun onServiceConnected(profile: Int, proxy: BluetoothProfile?) {
             if (profile == BluetoothProfile.HID_DEVICE && proxy is BluetoothHidDevice) {
                 mHidDevice = proxy
-
                 registerHidApp()
             }
         }
@@ -81,7 +79,7 @@ class BluetoothHidTouchpadClient(private val context: Context) : ConnectionClien
     private val mCallback = object : BluetoothHidDevice.Callback() {
         override fun onAppStatusChanged(pluggedDevice: BluetoothDevice?, registered: Boolean) {
             super.onAppStatusChanged(pluggedDevice, registered)
-            Log.d("BT_HID", "onAppStatusChanged: 註冊狀態 = $registered")
+            Log.d("BT_HID", "onAppStatusChanged: registered = $registered")
             _isAppRegistered.value = registered
             if (registered) {
                 checkCurrentConnections()
@@ -94,7 +92,7 @@ class BluetoothHidTouchpadClient(private val context: Context) : ConnectionClien
                 BluetoothProfile.STATE_CONNECTED -> {
                     mHostDevice = device
                     _connState.value = ConnState.CONNECTED
-                    Log.d("BT_HID", "已連接至設備: ${device?.address}")
+                    Log.d("BT_HID", "Connected: ${device?.address}")
                 }
                 BluetoothProfile.STATE_DISCONNECTED -> {
                     mHostDevice = null
@@ -108,17 +106,14 @@ class BluetoothHidTouchpadClient(private val context: Context) : ConnectionClien
     }
 
     init {
-        // 💡 首次啟動，開機綁定代理
         open()
     }
 
-    // 💡 新增 1：開啟/重新開啟藍牙服務代理與註冊流程
     fun open() {
         if (mHidDevice == null) {
             _isAppRegistered.value = false
             mBtAdapter?.getProfileProxy(context, mProfileListener, BluetoothProfile.HID_DEVICE)
         } else {
-            // 如果 Proxy 還在，直接嘗試重新註冊 App，避免背景切回後 SDP 註冊丟失
             registerHidApp()
         }
     }
@@ -147,7 +142,7 @@ class BluetoothHidTouchpadClient(private val context: Context) : ConnectionClien
         if (connectedDevices.isNotEmpty()) {
             mHostDevice = connectedDevices[0]
             _connState.value = ConnState.CONNECTED
-            Log.d("BT_HID", "同步：檢測到已建立的藍牙連線: ${mHostDevice?.address}")
+            Log.d("BT_HID", "Sync: ${mHostDevice?.address}")
         }
     }
 
@@ -175,7 +170,6 @@ class BluetoothHidTouchpadClient(private val context: Context) : ConnectionClien
     private fun sendConsumerReport(controlMask: Byte) {
         val device = mHostDevice
         val hid = mHidDevice
-        // 💡 修正 1：修正原本錯字將 mHostDevice 誤寫為 host 的問題
         if (device != null && hid != null) {
             val report = byteArrayOf(controlMask)
             hid.sendReport(device, 3, report)
@@ -220,7 +214,91 @@ class BluetoothHidTouchpadClient(private val context: Context) : ConnectionClien
                     }
                 }
             }
-            else -> {}
+            // 💡 修正 1：雙指縮放「無語系干擾之數字鍵盤 + 80ms 突破掛鉤極速排隊鎖」
+            is TouchOutEvent.Zoom -> {
+                val steps = event.delta.toInt()
+                Log.d("BT_DEBUG", "【手勢引擎】偵測到縮放事件, steps = $steps")
+                if (steps == 0) return
+
+                val isZoomIn = steps > 0
+                val loopCount = kotlin.math.abs(steps)
+
+                clientScope.launch {
+                    keyboardMutex.withLock {
+                        try {
+                            repeat(loopCount) {
+                                if (isZoomIn) {
+                                    // 💡 模擬實體鍵盤：Win (0x08) + 數字鍵盤加號 Keypad Plus (0x57)
+                                    // 💡 使用 80ms 突破 Windows 輔助工具防誤觸機制，且數字鍵盤 100% 避開語系干擾
+                                    sendKeyboardReport(0x08, 0x57.toByte())
+                                    delay(80)
+                                    sendKeyboardReport(0x00, 0x00)
+                                } else {
+                                    // 💡 模擬實體鍵盤：Win (0x08) + 數字鍵盤減號 Keypad Minus (0x56)
+                                    sendKeyboardReport(0x08, 0x56.toByte())
+                                    delay(80)
+                                    sendKeyboardReport(0x00, 0x00)
+                                }
+                                delay(40) // 每次連擊物理間隔縮短至 40ms，大幅緩解排隊塞車
+                            }
+                        } finally {
+                            sendKeyboardReport(0x00, 0x00)
+                        }
+                    }
+                }
+            }
+            is TouchOutEvent.Gesture -> {
+                when {
+                    event.name == "desktop" && (event.direction == "down" || event.direction == "up") -> {
+                        clientScope.launch {
+                            sendKeyboardReport(0x08, 0x07.toByte())
+                            delay(15)
+                            sendKeyboardReport(0x00, 0x00)
+                        }
+                    }
+                    event.name == "multitask" && event.direction == "tap" -> {
+                        clientScope.launch {
+                            sendKeyboardReport(0x08, 0x2B.toByte())
+                            delay(15)
+                            sendKeyboardReport(0x00, 0x00)
+                        }
+                    }
+                }
+            }
+            // 💡 修正 2：水平滑動「100% 不丟棄之極速排隊鎖版本」
+            is TouchOutEvent.Keypress -> {
+                when (event.key) {
+                    // 瀏覽器上一頁：Alt + Left Arrow
+                    "BROWSER_BACK" -> {
+                        clientScope.launch {
+                            // 💡 改用 withLock 確保單次手勢 100% 執行
+                            keyboardMutex.withLock {
+                                try {
+                                    sendKeyboardReport(0x04, 0x50.toByte())
+                                    delay(25)
+                                    sendKeyboardReport(0x00, 0x00)
+                                } finally {
+                                    sendKeyboardReport(0x00, 0x00)
+                                }
+                            }
+                        }
+                    }
+                    // 瀏覽器下一頁：Alt + Right Arrow
+                    "BROWSER_FORWARD" -> {
+                        clientScope.launch {
+                            keyboardMutex.withLock {
+                                try {
+                                    sendKeyboardReport(0x04, 0x4F.toByte())
+                                    delay(25)
+                                    sendKeyboardReport(0x00, 0x00)
+                                } finally {
+                                    sendKeyboardReport(0x00, 0x00)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -278,7 +356,6 @@ class BluetoothHidTouchpadClient(private val context: Context) : ConnectionClien
         }
     }
 
-    // 💡 修正 2：切出背景或手動斷連時，安全關閉並釋放代理服務，符合系統背景規範
     @SuppressLint("MissingPermission")
     override fun close() {
         disconnectHost()
@@ -300,19 +377,15 @@ class BluetoothHidTouchpadClient(private val context: Context) : ConnectionClien
         return mBtAdapter?.bondedDevices?.toList() ?: emptyList()
     }
 
-    /**
-     * 💡 補上遺漏的反射實作：強制 Android 系統抹除與該設備的實體配對金鑰（Unpair/Unbond）
-     * 由於 Android SDK 預設將 removeBond() 標記為系統 API (hide)，我們必須透過 Java 反射安全調用它。
-     */
     @SuppressLint("MissingPermission")
     fun removeBond(device: BluetoothDevice): Boolean {
         return try {
             val method = device.javaClass.getMethod("removeBond")
             val result = method.invoke(device) as Boolean
-            Log.d("BT_HID", "系統解除配對 (removeBond) 呼交結果: $result")
+            Log.d("BT_HID", "removeBond result: $result")
             result
         } catch (e: Exception) {
-            Log.e("BT_HID", "反射呼叫 removeBond 失敗: ${e.message}", e)
+            Log.e("BT_HID", "removeBond error: ${e.message}", e)
             false
         }
     }
@@ -321,28 +394,26 @@ class BluetoothHidTouchpadClient(private val context: Context) : ConnectionClien
     fun connect(device: BluetoothDevice) {
         val hid = mHidDevice
         if (hid != null) {
-            // 1. 狀態同步防線：若系統底層已連線，直接同步
             val connectedDevices = hid.getDevicesMatchingConnectionStates(
                 intArrayOf(BluetoothProfile.STATE_CONNECTED)
             )
             if (connectedDevices.any { it.address == device.address }) {
-                Log.d("BT_HID", "同步：該裝置在系統層面已是連線狀態，直接同步，無需重連")
+                Log.d("BT_HID", "Already connected")
                 mHostDevice = device
                 _connState.value = ConnState.CONNECTED
                 return
             }
 
-            // 2. 啟動高頻探針自適應重試線
-            clientScope.launch {
+            connectJob?.cancel()
+
+            connectJob = clientScope.launch {
                 var success = false
                 var attempts = 0
                 val maxAttempts = 3
 
-                // 只要當前狀態不是 CONNECTED，且重試次數未滿，就繼續重試
                 while (_connState.value != ConnState.CONNECTED && attempts < maxAttempts) {
-                    // 安全退場閥
                     if (attempts > 0 && mHostDevice == null) {
-                        Log.d("BT_HID", "使用者已取消連線，中止重試")
+                        Log.d("BT_HID", "Cancelled by user")
                         break
                     }
 
@@ -351,12 +422,9 @@ class BluetoothHidTouchpadClient(private val context: Context) : ConnectionClien
                     _connState.value = ConnState.CONNECTING
 
                     success = hid.connect(device)
-                    Log.d("BT_HID", "嘗試主動連線至 ${device.name ?: "Device"} (第 $attempts 次嘗試): $success")
+                    Log.d("BT_HID", "Connect attempt $attempts: $success")
 
                     if (success) {
-                        // 💡 修正核心：改用 100ms 高頻極速探針。最長等待 4 秒。
-                        // 只要系統一回報已連線，在 0.1 秒內探針就會瞬間捕捉到，並「立刻結束重試」！
-                        // 這能徹底杜絕因系統廣播排隊延遲而引發的重複重連 Bug，且提早連上會秒斷結束，不浪費一絲電量！
                         var waitTime = 0
                         while (_connState.value != ConnState.CONNECTED && waitTime < 4000) {
                             delay(100)
@@ -364,31 +432,32 @@ class BluetoothHidTouchpadClient(private val context: Context) : ConnectionClien
                         }
 
                         if (_connState.value == ConnState.CONNECTED) {
-                            Log.d("BT_HID", "藍牙實體連線已建立，成功中止重試線")
+                            Log.d("BT_HID", "Connected successfully")
                             break
                         }
                     }
 
                     if (_connState.value != ConnState.CONNECTED && attempts < maxAttempts) {
-                        // 失敗後，等待 1.5 秒讓晶片稍微緩衝，再次發起重試
                         delay(1500)
                     }
                 }
 
-                // 💡 3. 自適應超時判定
                 if (_connState.value != ConnState.CONNECTED && mHostDevice != null) {
-                    Log.w("BT_HID", "藍牙自適應重試結束，所有嘗試均失敗，重置狀態")
+                    Log.w("BT_HID", "Connect failed")
                     _connState.value = ConnState.DISCONNECTED
                     mHostDevice = null
                 }
             }
         } else {
-            Log.w("BT_HID", "無法連線：HID Device 代理尚未就緒")
+            Log.w("BT_HID", "HID Device proxy not ready")
         }
     }
 
     @SuppressLint("MissingPermission")
     fun disconnectHost() {
+        connectJob?.cancel()
+        connectJob = null
+
         val hid = mHidDevice
         val host = mHostDevice
         if (hid != null && host != null) {

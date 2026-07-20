@@ -1,5 +1,3 @@
-// D:/howie/Documents/vr-touchpad-app/vr-touchpad-app/android-app/app/src/main/java/com/example/vrtouchpad/ui/TouchpadViewModel.kt
-
 package com.example.vrtouchpad.ui
 
 import android.annotation.SuppressLint
@@ -15,7 +13,8 @@ import com.example.vrtouchpad.data.WifiNetworkIdProvider
 import com.example.vrtouchpad.data.WifiPerformanceManager
 import com.example.vrtouchpad.engine.ConnectionOrchestrator
 import com.example.vrtouchpad.network.ConnState
-import com.example.vrtouchpad.network.TouchpadWebSocketClient
+import com.example.vrtouchpad.network.WebSocketClient
+import com.example.vrtouchpad.network.ConnectionClient
 import com.example.vrtouchpad.network.BluetoothHidTouchpadClient
 import com.example.vrtouchpad.engine.TouchOutEvent
 import kotlinx.coroutines.CoroutineStart
@@ -28,7 +27,7 @@ import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
-import org.json.JSONArray // 💡 導入 JSON 工具
+import org.json.JSONArray
 
 enum class ConnectionMode { WIFI, BLUETOOTH }
 
@@ -92,7 +91,6 @@ class TouchpadViewModel(
     private val _btBondedDevices = MutableStateFlow<List<android.bluetooth.BluetoothDevice>>(emptyList())
     val btBondedDevices: StateFlow<List<android.bluetooth.BluetoothDevice>> = _btBondedDevices
 
-    // 💡 新增 1：向外部暴露已儲存的藍牙 MAC 位址清單 Flow
     private val _savedBtAddresses = MutableStateFlow<Set<String>>(emptySet())
     val savedBtAddresses: StateFlow<Set<String>> = _savedBtAddresses
 
@@ -100,7 +98,7 @@ class TouchpadViewModel(
     private var pendingPairServer: DiscoveredServer? = null
     private var lastDialToken: String? = null
 
-    val wsClient = TouchpadWebSocketClient(
+    val wsClient = WebSocketClient(
         onPairSuccess = { token, pcName ->
             _isPairingBusy.value = false
             _pairingError.value = null
@@ -129,6 +127,9 @@ class TouchpadViewModel(
     )
 
     val btClient = BluetoothHidTouchpadClient(context)
+
+    private val activeClient: ConnectionClient
+        get() = if (_connectionMode.value == ConnectionMode.BLUETOOTH) btClient else wsClient
 
     private val orchestrator = ConnectionOrchestrator(
         scope = viewModelScope,
@@ -219,7 +220,6 @@ class TouchpadViewModel(
         if (state == ConnState.CONNECTED && _connectionMode.value == ConnectionMode.WIFI) pairingManager.getSelectedServerUuid() else null
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
-    // 💡 新增 2：向外部提供當前連線成功的藍牙設備 MAC 狀態流，供清單匹配綠燈
     val connectedBtAddress: StateFlow<String?> = combine(
         connState,
         _connectionMode
@@ -230,76 +230,13 @@ class TouchpadViewModel(
     init {
         refreshServerLists()
 
-        if (settingsStore.connectionMode != "UNSET") {
-            if (_connectionMode.value == ConnectionMode.WIFI) {
-                if (pairingManager.getSavedServers().isEmpty()) {
-                    startPairingScan()
-                } else {
-                    orchestrator.start()
-                }
-            } else {
-                refreshBtDevices()
-            }
-        }
+        // 💡 開機時，發起初始連線嘗試
+        startInitialConnection()
 
-        viewModelScope.launch {
-            connState.collect { state ->
-                if (state == ConnState.CONNECTED) {
-                    _unpairedDiscovered.value = emptyList()
-                    if (_connectionMode.value == ConnectionMode.WIFI) {
-                        wifiPerformanceManager.acquire()
-                    }
-                } else {
-                    wifiPerformanceManager.release()
-                }
-            }
-        }
-
-        viewModelScope.launch {
-            btClient.connState.collect { state ->
-                if (_connectionMode.value == ConnectionMode.BLUETOOTH && state == ConnState.CONNECTED) {
-                    btClient.connectedDevice?.address?.let { address ->
-                        Log.d("BT_AUTO_CONNECT", "藍牙連線成功，記錄歷史 MAC: $address")
-                        settingsStore.lastConnectedBtAddress = address
-                        // 💡 新增 3：首次連線成功時，自動加入藍牙歷史名冊
-                        saveBtAddress(address)
-                    }
-                }
-            }
-        }
-
-        viewModelScope.launch {
-            btClient.isAppRegistered.collect { registered ->
-                if (registered && _connectionMode.value == ConnectionMode.BLUETOOTH) {
-                    Log.d("BT_AUTO_CONNECT", "檢測到藍牙服務已註冊就緒，延遲 500ms 給予晶片緩衝後發起重連...")
-                    delay(500)
-                    attemptBluetoothAutoConnect()
-                }
-            }
-        }
-
-        viewModelScope.launch {
-            wsClient.connState.collect { state ->
-                if (_connectionMode.value != ConnectionMode.WIFI) return@collect
-
-                if (state == ConnState.AUTH_FAILED) {
-                    val failedUuid = lastDialToken?.let { token ->
-                        pairingManager.getSavedServers().find { it.token == token }?.uuid
-                    }
-                    if (failedUuid != null) {
-                        Log.d("AUTH_FAILED", "電腦端已解除信任，自動清除本機紀錄: $failedUuid")
-                        pairingManager.deleteServer(failedUuid)
-                        networkProfileStore.removeAllReferencesTo(failedUuid)
-                        refreshServerLists()
-                    }
-                } else if (state == ConnState.DISCONNECTED) {
-                    if (isAppActive && !_userWantsOffline.value && pairingManager.getSavedServers().isNotEmpty() && _pairingNavState.value == PairingNavState.Hidden) {
-                        Log.d("RECONNECT", "Socket 斷開且處於前景，重新喚醒自動連線協調器")
-                        orchestrator.start()
-                    }
-                }
-            }
-        }
+        // 💡 註冊各種傳輸協議的狀態監聽器
+        observeGeneralConnection()
+        observeBluetoothEvents()
+        observeWifiEvents()
     }
 
     private suspend fun dialAdapter(host: String, port: Int, token: String): Boolean {
@@ -320,7 +257,6 @@ class TouchpadViewModel(
         _savedServers.value = pairingManager.getSavedServers()
     }
 
-    // 💡 新增 4：JSON 名單讀寫工具方法
     private fun getSavedBtAddresses(): Set<String> {
         val raw = settingsStore.savedBtDevices
         return runCatching {
@@ -346,12 +282,10 @@ class TouchpadViewModel(
         if (current.remove(address)) {
             settingsStore.savedBtDevices = JSONArray(current).toString()
 
-            // 1. 如果被刪除的裝置正處於活動連線，先主動斷開連線
             if (btClient.connectedDevice?.address == address) {
                 Log.d("BT_UNPAIR", "被移除的裝置為目前連線設備，主動中斷藍牙連線")
                 btClient.close()
             }
-
 
             val bonded = btClient.getBondedDevices()
             val target = bonded.find { it.address == address }
@@ -370,8 +304,6 @@ class TouchpadViewModel(
     fun refreshBtDevices() {
         _savedBtAddresses.value = getSavedBtAddresses()
 
-        // 💡 新增 5：獲取系統配對列表，並根據「是否成功連線過（藍燈）」進行優先置頂排序！
-        // 這樣您的電腦、VR 設備會永遠排在清單最上方，而其他無關的耳機手錶雜訊會自動沉到底部
         val rawDevices = btClient.getBondedDevices()
         val history = _savedBtAddresses.value
         _btBondedDevices.value = rawDevices.sortedByDescending { history.contains(it.address) }
@@ -404,11 +336,7 @@ class TouchpadViewModel(
     }
 
     fun sendEvent(event: TouchOutEvent) {
-        if (_connectionMode.value == ConnectionMode.BLUETOOTH) {
-            btClient.sendEvent(event)
-        } else {
-            wsClient.sendEvent(event)
-        }
+        activeClient.sendEvent(event)
     }
 
     fun setConnectionMode(mode: ConnectionMode) {
@@ -541,7 +469,6 @@ class TouchpadViewModel(
     }
 
     fun deleteServer(uuid: String) {
-        // 💡 新增 6：將刪除路由導向藍牙歷史移除，使藍牙頁面也可以使用「滑動刪除」！
         if (_connectionMode.value == ConnectionMode.BLUETOOTH) {
             deleteBtAddress(uuid)
             return
@@ -638,19 +565,11 @@ class TouchpadViewModel(
     }
 
     fun sendText(text: String) {
-        if (_connectionMode.value == ConnectionMode.BLUETOOTH) {
-            btClient.sendText(text)
-        } else {
-            wsClient.sendText(text)
-        }
+        activeClient.sendText(text)
     }
 
     fun sendKeypress(key: String) {
-        if (_connectionMode.value == ConnectionMode.BLUETOOTH) {
-            btClient.sendKeypress(key)
-        } else {
-            wsClient.sendKeypress(key)
-        }
+        activeClient.sendKeypress(key)
     }
 
     override fun onCleared() {
@@ -659,5 +578,97 @@ class TouchpadViewModel(
         wsClient.close()
         btClient.destroy()
         wifiPerformanceManager.release()
+    }
+
+    /**
+     * 負責開機時的初始連線分流邏輯
+     */
+    private fun startInitialConnection() {
+        if (settingsStore.connectionMode != "UNSET") {
+            if (_connectionMode.value == ConnectionMode.WIFI) {
+                if (pairingManager.getSavedServers().isEmpty()) {
+                    startPairingScan()
+                } else {
+                    orchestrator.start()
+                }
+            } else {
+                refreshBtDevices()
+            }
+        }
+    }
+
+    /**
+     * 監聽全域連線狀態，主要負責在連線時獲取高效能 WiFi 鎖
+     */
+    private fun observeGeneralConnection() {
+        viewModelScope.launch {
+            connState.collect { state ->
+                if (state == ConnState.CONNECTED) {
+                    _unpairedDiscovered.value = emptyList()
+                    if (_connectionMode.value == ConnectionMode.WIFI) {
+                        wifiPerformanceManager.acquire()
+                    }
+                } else {
+                    wifiPerformanceManager.release()
+                }
+            }
+        }
+    }
+
+    /**
+     * 負責藍牙相關的背景連線事件、自動重連與歷史紀錄寫入
+     */
+    private fun observeBluetoothEvents() {
+        // 監聽藍牙連線成功，記錄歷史 MAC
+        viewModelScope.launch {
+            btClient.connState.collect { state ->
+                if (_connectionMode.value == ConnectionMode.BLUETOOTH && state == ConnState.CONNECTED) {
+                    btClient.connectedDevice?.address?.let { address ->
+                        Log.d("BT_AUTO_CONNECT", "藍牙連線成功，記錄歷史 MAC: $address")
+                        settingsStore.lastConnectedBtAddress = address
+                        saveBtAddress(address)
+                    }
+                }
+            }
+        }
+
+        // 監聽藍牙 App 註冊就緒狀態，自動重連
+        viewModelScope.launch {
+            btClient.isAppRegistered.collect { registered ->
+                if (registered && _connectionMode.value == ConnectionMode.BLUETOOTH) {
+                    Log.d("BT_AUTO_CONNECT", "檢測到藍牙服務已註冊就緒，延遲 500ms 給予晶片緩衝後發起重連...")
+                    delay(500)
+                    attemptBluetoothAutoConnect()
+                }
+            }
+        }
+    }
+
+    /**
+     * 負責 Wi-Fi 相關的連線狀態事件，包括遠端撤銷信任、前景自動重連
+     */
+    private fun observeWifiEvents() {
+        viewModelScope.launch {
+            wsClient.connState.collect { state ->
+                if (_connectionMode.value != ConnectionMode.WIFI) return@collect
+
+                if (state == ConnState.AUTH_FAILED) {
+                    val failedUuid = lastDialToken?.let { token ->
+                        pairingManager.getSavedServers().find { it.token == token }?.uuid
+                    }
+                    if (failedUuid != null) {
+                        Log.d("AUTH_FAILED", "電腦端已解除信任，自動清除本機紀錄: $failedUuid")
+                        pairingManager.deleteServer(failedUuid)
+                        networkProfileStore.removeAllReferencesTo(failedUuid)
+                        refreshServerLists()
+                    }
+                } else if (state == ConnState.DISCONNECTED) {
+                    if (isAppActive && !_userWantsOffline.value && pairingManager.getSavedServers().isNotEmpty() && _pairingNavState.value == PairingNavState.Hidden) {
+                        Log.d("RECONNECT", "Socket 斷開且處於前景，重新喚醒自動連線協調器")
+                        orchestrator.start()
+                    }
+                }
+            }
+        }
     }
 }

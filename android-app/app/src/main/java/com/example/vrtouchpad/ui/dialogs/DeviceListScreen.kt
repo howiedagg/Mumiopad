@@ -161,7 +161,12 @@ fun DeviceListScreen(
                             .padding(vertical = 8.dp),
                         contentAlignment = Alignment.Center
                     ) {
-                        Text("Wi-Fi", color = if (isWifi) Color.White else Color.Gray, style = MaterialTheme.typography.bodyMedium)
+                        // 💡 改用 stringResource 讀取 Wi-Fi 語系文字
+                        Text(
+                            text = stringResource(R.string.onboarding_choice_wifi),
+                            color = if (isWifi) Color.White else Color.Gray,
+                            style = MaterialTheme.typography.bodyMedium
+                        )
                     }
 
                     Box(
@@ -173,7 +178,12 @@ fun DeviceListScreen(
                             .padding(vertical = 8.dp),
                         contentAlignment = Alignment.Center
                     ) {
-                        Text("藍牙", color = if (!isWifi) Color.White else Color.Gray, style = MaterialTheme.typography.bodyMedium)
+                        // 💡 改用 stringResource 讀取 藍牙 語系文字
+                        Text(
+                            text = stringResource(R.string.onboarding_choice_bluetooth),
+                            color = if (!isWifi) Color.White else Color.Gray,
+                            style = MaterialTheme.typography.bodyMedium
+                        )
                     }
                 }
 
