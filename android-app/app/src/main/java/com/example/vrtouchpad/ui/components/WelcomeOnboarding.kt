@@ -57,7 +57,6 @@ fun WelcomeOnboarding(
         )
     }
 
-    // 💡 統一規範：設備動態排序（🟢 已連線 -> 🟡 連線中 -> 🔵 歷史保存 -> ⚪ 未配對裝置）
     val sortedBtDevices = remember(btBondedDevices, connectedBtAddress, savedBtAddresses) {
         btBondedDevices.sortedWith(compareByDescending<BluetoothDevice> { device ->
             device.address == connectedBtAddress
@@ -92,7 +91,7 @@ fun WelcomeOnboarding(
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Text(
-                            text = "Mumiopad",
+                            text = stringResource(R.string.app_name), // 💡 修正：移除硬編碼，使用系統語系檔定義的品牌名稱
                             style = MaterialTheme.typography.headlineLarge,
                             color = Color.White
                         )
@@ -260,7 +259,7 @@ fun WelcomeOnboarding(
                                                         modifier = Modifier
                                                             .size(8.dp)
                                                             .clip(CircleShape)
-                                                            .background(Color(0xFF757575)) // ⚪ 灰燈：符合規範
+                                                            .background(Color(0xFF757575))
                                                     )
                                                     Spacer(Modifier.width(16.dp))
                                                     Column {
@@ -330,10 +329,10 @@ fun WelcomeOnboarding(
                                     val isSaved = savedBtAddresses.contains(device.address)
 
                                     val dotColor = when {
-                                        isConnected -> Color(0xFF4CAF50)   // 🟢 綠燈：已連線
-                                        isConnecting -> Color(0xFFFFA000)  // 🟡 橘燈：連線中
-                                        isSaved -> Color(0xFF42A5F5)       // 🔵 藍燈：歷史配對
-                                        else -> Color(0xFF757575)          // ⚪ 灰燈：未配對
+                                        isConnected -> Color(0xFF4CAF50)
+                                        isConnecting -> Color(0xFFFFA000)
+                                        isSaved -> Color(0xFF42A5F5)
+                                        else -> Color(0xFF757575)
                                     }
 
                                     @SuppressLint("MissingPermission")

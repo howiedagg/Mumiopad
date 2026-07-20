@@ -1,3 +1,5 @@
+// D:/howie/Documents/vr-touchpad-app/vr-touchpad-app/android-app/app/src/main/java/com/example/vrtouchpad/ui/TouchpadViewModel.kt
+
 package com.example.vrtouchpad.ui
 
 import android.annotation.SuppressLint
@@ -30,6 +32,9 @@ import kotlinx.coroutines.delay
 import org.json.JSONArray
 
 enum class ConnectionMode { WIFI, BLUETOOTH }
+
+// 💡 修正：抽取並宣告全域通用的預設連線埠常數，避免多個檔案硬編碼
+const val DEFAULT_PORT = 8765
 
 class TouchpadViewModel(
     private val pairingManager: PairingManager,
@@ -158,6 +163,7 @@ class TouchpadViewModel(
             )
         },
         dial = ::dialAdapter,
+        defaultPort = DEFAULT_PORT // 💡 修正：灌入全域共享的連線埠常數
     )
 
     val connState: StateFlow<ConnState> = combine(
@@ -233,11 +239,7 @@ class TouchpadViewModel(
 
     init {
         refreshServerLists()
-
-        // 💡 開機時，發起初始連線嘗試
         startInitialConnection()
-
-        // 💡 註冊各種傳輸協議的狀態監聽器
         observeGeneralConnection()
         observeBluetoothEvents()
         observeWifiEvents()
@@ -316,8 +318,8 @@ class TouchpadViewModel(
     fun refreshBtDevicesWithSpinner() {
         viewModelScope.launch {
             _isScanning.value = true
-            refreshBtDevices() // 瞬間完成讀取
-            delay(5000)         // 💡 故意延遲 600 毫秒，讓載入進度條轉一下提供反饋
+            refreshBtDevices()
+            delay(600)
             _isScanning.value = false
         }
     }
@@ -369,7 +371,7 @@ class TouchpadViewModel(
             wsClient.close()
             wifiPerformanceManager.release()
             btClient.open()
-            refreshBtDevicesWithSpinner() // 💡 切換到藍牙模式時，自動觸發 600ms 旋轉動畫
+            refreshBtDevicesWithSpinner()
         } else {
             btClient.close()
             _unpairedDiscovered.value = emptyList()
@@ -506,7 +508,7 @@ class TouchpadViewModel(
                 val convertedUnpaired = DiscoveredServer(
                     uuid = serverToBeDeletedInfo.uuid,
                     host = ip,
-                    port = 8765,
+                    port = DEFAULT_PORT, // 💡 修正：導入並共享 DEFAULT_PORT
                     name = serverToBeDeletedInfo.name
                 )
                 _unpairedDiscovered.value = listOf(convertedUnpaired)
@@ -538,11 +540,10 @@ class TouchpadViewModel(
         pendingPairServer = null
         refreshServerLists()
         _pairingNavState.value = PairingNavState.DeviceList
-
         if (_connectionMode.value == ConnectionMode.WIFI) {
             startPairingScan()
         } else {
-            refreshBtDevicesWithSpinner() // 💡 點開彈窗時，自動觸發 600ms 旋轉動畫
+            refreshBtDevicesWithSpinner()
         }
     }
 
@@ -596,9 +597,6 @@ class TouchpadViewModel(
         wifiPerformanceManager.release()
     }
 
-    /**
-     * 負責開機時的初始連線分流邏輯
-     */
     private fun startInitialConnection() {
         if (settingsStore.connectionMode != "UNSET") {
             if (_connectionMode.value == ConnectionMode.WIFI) {
@@ -613,9 +611,6 @@ class TouchpadViewModel(
         }
     }
 
-    /**
-     * 監聽全域連線狀態，主要負責在連線時獲取高效能 WiFi 鎖
-     */
     private fun observeGeneralConnection() {
         viewModelScope.launch {
             connState.collect { state ->
@@ -631,11 +626,7 @@ class TouchpadViewModel(
         }
     }
 
-    /**
-     * 負責藍牙相關的背景連線事件、自動重連與歷史紀錄寫入
-     */
     private fun observeBluetoothEvents() {
-        // 監聽藍牙連線成功，記錄歷史 MAC
         viewModelScope.launch {
             btClient.connState.collect { state ->
                 if (_connectionMode.value == ConnectionMode.BLUETOOTH && state == ConnState.CONNECTED) {
@@ -648,7 +639,6 @@ class TouchpadViewModel(
             }
         }
 
-        // 監聽藍牙 App 註冊就緒狀態，自動重連
         viewModelScope.launch {
             btClient.isAppRegistered.collect { registered ->
                 if (registered && _connectionMode.value == ConnectionMode.BLUETOOTH) {
@@ -660,9 +650,6 @@ class TouchpadViewModel(
         }
     }
 
-    /**
-     * 負責 Wi-Fi 相關的連線狀態事件，包括遠端撤銷信任、前景自動重連
-     */
     private fun observeWifiEvents() {
         viewModelScope.launch {
             wsClient.connState.collect { state ->

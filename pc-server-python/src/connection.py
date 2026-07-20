@@ -6,34 +6,31 @@ import socket
 import uuid
 import ctypes
 from websockets.server import serve
-from src.config import load_config, add_device_token, remove_device_token, IS_WINDOWS
+from src.config import load_config, add_device_token, remove_device_token, IS_WINDOWS, PORT # 💡 修正：匯入 PORT
 from src.controller import apply_move, apply_click, apply_scroll, apply_zoom, apply_text, apply_keypress, apply_gesture
 from src.locale_manager import _
 
 HOST = "0.0.0.0"
-PORT = 8765
+# PORT = 8765 # 👈 修正：刪除此處重複寫死的硬編碼，改用 config 匯入
 
 class ConnectionManager:
-    # 【修正】：建構子直接接收運作中的 `loop` 物件，避免反向導入入口腳本
     def __init__(self, server_uuid: str, loop: asyncio.AbstractEventLoop, on_update_menu_callback=None):
         self.server_uuid = server_uuid
-        self.loop = loop  # 【新增】：保存事件循環物件
-        self.active_connections = {}  # 對應 token -> websocket 連線
+        self.loop = loop
+        self.active_connections = {}
         self.on_update_menu = on_update_menu_callback
 
     def show_pairing_dialog_windows(self, device_name: str) -> bool:
         if IS_WINDOWS:
-            # 使用對應語系顯示
             result = ctypes.windll.user32.MessageBoxW(
                 0, 
                 _("pair_request_msg").format(device_name), 
                 _("pair_request_title"), 
                 0x00000004 | 0x00000020 | 0x00040000
             )
-            return result == 6  # IDYES = 6
+            return result == 6
         return True
 
-    # 【修正】：直接使用傳入的 `self.loop` 安全跨執行緒中斷實體連線，徹底避開 None 陷阱
     def close_connection_by_token(self, token: str):
         websocket = self.active_connections.get(token)
         if websocket:

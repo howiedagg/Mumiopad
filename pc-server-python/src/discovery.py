@@ -1,9 +1,11 @@
 # pc-server-python/src/discovery.py
+
 import socket
 from zeroconf import ServiceInfo
 from zeroconf.asyncio import AsyncZeroconf
+from src.config import PORT # 💡 修正：匯入 PORT，避免散落硬編碼
 
-PORT = 8765
+# PORT = 8765 # 👈 修正：刪除重複硬編碼
 
 def get_lan_ip() -> str:
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)

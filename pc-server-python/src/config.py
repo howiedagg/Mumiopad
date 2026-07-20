@@ -1,13 +1,14 @@
 # pc-server-python/src/config.py
+
 import sys
 import json
 import uuid
 from pathlib import Path
 
 IS_WINDOWS = sys.platform == "win32"
+PORT = 8765 # 💡 修正：抽取並定義全局共享連線埠，避免分散硬編碼
 
 def get_secure_config_path() -> Path:
-    # 統一存放在 main.py 同目錄下
     return Path(__file__).resolve().parent.parent / "server_config.json"
 
 CONFIG_FILE = get_secure_config_path()
