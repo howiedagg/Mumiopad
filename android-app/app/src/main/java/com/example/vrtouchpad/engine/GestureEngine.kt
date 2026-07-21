@@ -33,7 +33,8 @@ class GestureEngine(
     private val emit: (TouchOutEvent) -> Unit,
     private val onLocalFeedback: (LocalFeedbackType) -> Unit = {},
     private val onToggleKeyboard: () -> Unit = {},
-    private val isKeyboardActive: () -> Boolean = { false } // 判斷鍵盤狀態的回呼
+    private val isKeyboardActive: () -> Boolean = { false }, // 判斷鍵盤狀態的回呼
+    private val getScrollSpeed: () -> Float = { 1f } // 💡 新增：動態獲取當前滾動速度的 Lambda
 ) {
     private val slopPx = 8f * density
     private val stillPx = 10f * density
@@ -51,6 +52,9 @@ class GestureEngine(
     private val scrollDampeningLimitPx = 35f * density
     private val hapticNotchDistancePx = 24f * density // 可調：越小震動越密集
     private var rawHapticAccumulator = 0f
+
+    // 💡 新增：滾動步數累加器
+    private var scrollStepAccumulator = 0f
 
     private var lastHapticTwoFingerDist = 0f // 紀錄上一次觸發震動時的「絕對距離」
 
@@ -85,7 +89,6 @@ class GestureEngine(
     private var accumulatedDy = 0f
     private var accumulatedDragDx = 0f
     private var accumulatedDragDy = 0f
-    private var accumulatedScrollDy = 0f
     private var accumulatedZoomSteps = 0 // 儲存準備傳送給 PC 的精準整數縮放步數
 
     private var startTwoFingerDist = 0f // 兩指初始距離
@@ -98,8 +101,30 @@ class GestureEngine(
     private var threeFingerStartY = 0f
     private var threeFingerSwiped = false
 
+    // 💡 修改：平滑器在收到補償位移時，直接灌入步數累加器
     private val catchupSmoother = ScrollCatchupSmoother(scope) { delta ->
-        accumulatedScrollDy += delta
+        scrollStepAccumulator += delta * getScrollSpeed()
+        triggerStepsFromAccumulator()
+    }
+
+    // 💡 新增：當位移達到門檻時，同步觸發手機震動與向外發送精準整數步數
+    private fun triggerStepsFromAccumulator() {
+        val hapticThreshold = hapticNotchDistancePx // 24dp * density
+        val steps = (scrollStepAccumulator / hapticThreshold).toInt()
+
+        if (steps != 0) {
+            // 1. 觸發手機震動
+            val absSteps = abs(steps)
+            repeat(absSteps) {
+                onLocalFeedback(LocalFeedbackType.TICK)
+            }
+
+            // 2. 向外發送精準的整數步數 (例如 +1f 或 -1f)
+            emit(TouchOutEvent.Scroll(steps.toFloat()))
+
+            // 3. 扣除已消耗的步數位移
+            scrollStepAccumulator -= steps * hapticThreshold
+        }
     }
 
     fun onDown(id: Long, x: Float, y: Float) {
@@ -152,7 +177,8 @@ class GestureEngine(
                     lastHapticTwoFingerDist = startTwoFingerDist
                 }
 
-                accumulatedScrollDy = 0f
+                // 💡 將原本的 accumulatedScrollDy 改為重置新的步數累加器
+                scrollStepAccumulator = 0f
                 accumulatedZoomSteps = 0
                 rawHapticAccumulator = 0f
                 lastEmitTime = System.currentTimeMillis()
@@ -289,7 +315,6 @@ class GestureEngine(
                         if (abs(deltaY) > abs(deltaX)) {
                             mode = Mode.SCROLL_VERTICAL
                             catchupSmoother.start(deltaY)
-                            triggerRawHaptics(deltaY)
                             lastScrollY = currentAvgY
                         } else {
                             mode = Mode.SWIPE_HORIZONTAL
@@ -305,18 +330,11 @@ class GestureEngine(
                 if (p1 != null && p2 != null) {
                     val currentAvgY = (p1.y + p2.y) / 2
                     val rawDeltaY = currentAvgY - lastScrollY
-                    accumulatedScrollDy += rawDeltaY
 
-                    triggerRawHaptics(rawDeltaY)
+                    // 💡 將實體滑動位移乘以速度，灌入步數累加器並嘗試觸發
+                    scrollStepAccumulator += rawDeltaY * getScrollSpeed()
+                    triggerStepsFromAccumulator()
 
-                    if (now - lastEmitTime >= emitIntervalMs) {
-                        if (abs(accumulatedScrollDy) > 0.1f) {
-                            val limitedScrollDy = applyScrollDampening(accumulatedScrollDy)
-                            emit(TouchOutEvent.Scroll(limitedScrollDy))
-                            accumulatedScrollDy = 0f
-                        }
-                        lastEmitTime = now
-                    }
                     lastScrollY = currentAvgY
                 }
             }
@@ -462,10 +480,7 @@ class GestureEngine(
 
             Mode.SCROLL_VERTICAL -> {
                 catchupSmoother.cancel()
-                if (abs(accumulatedScrollDy) > 0.1f) {
-                    val limitedScrollDy = applyScrollDampening(accumulatedScrollDy)
-                    emit(TouchOutEvent.Scroll(limitedScrollDy))
-                }
+                // 💡 釋放時不需要發送殘留的微小位移，因為未滿一格不觸發滾動，符合物理滾輪體驗
             }
 
             Mode.ZOOM -> { // 釋放手指時送出剩餘縮放步數
@@ -536,7 +551,7 @@ class GestureEngine(
         accumulatedDy = 0f
         accumulatedDragDx = 0f
         accumulatedDragDy = 0f
-        accumulatedScrollDy = 0f
+        scrollStepAccumulator = 0f
         accumulatedZoomSteps = 0
         startTwoFingerDist = 0f
         lastTwoFingerDist = 0f
@@ -578,13 +593,6 @@ class GestureEngine(
         val extra = absDy - scrollDampeningLimitPx
         val dampenedAbs = scrollDampeningLimitPx + (extra * 0.25f)
         return if (dy > 0) dampenedAbs else -dampenedAbs
-    }
-    private fun triggerRawHaptics(rawDeltaY: Float) {
-        rawHapticAccumulator += abs(rawDeltaY)
-        while (rawHapticAccumulator >= hapticNotchDistancePx) {
-            onLocalFeedback(LocalFeedbackType.TICK)
-            rawHapticAccumulator -= hapticNotchDistancePx
-        }
     }
 
     private fun triggerZoomHaptics(rawDeltaDist: Float) { // 格線絕對對齊震動演算法

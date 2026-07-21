@@ -52,8 +52,11 @@ fun Touchpad(
                         event.dx * currentMouseSpeed, event.dy * currentMouseSpeed,
                     )
                     is TouchOutEvent.Scroll -> {
-                        val directionMultiplier = if (currentReverseScroll) -1f else 1f
-                        TouchOutEvent.Scroll(event.dy * currentScrollSpeed * directionMultiplier)
+                        // 💡 修正方向：
+                        // 標準傳統滾動（currentReverseScroll = false）時，向下滑動期望送出「向下（負值）」；
+                        // 反向滾動（currentReverseScroll = true）時，向下滑動期望送出「向上（正值）」。
+                        val directionMultiplier = if (currentReverseScroll) 1f else -1f
+                        TouchOutEvent.Scroll(event.dy * directionMultiplier)
                     }
                     else -> event
                 }
@@ -93,7 +96,8 @@ fun Touchpad(
                 view.performHapticFeedback(constant)
             },
             onToggleKeyboard = { currentOnToggleKeyboard() },
-            isKeyboardActive = { currentIsKeyboardActive }
+            isKeyboardActive = { currentIsKeyboardActive },
+            getScrollSpeed = { currentScrollSpeed }
         )
     }
 

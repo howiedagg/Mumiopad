@@ -39,7 +39,7 @@ class BluetoothHidTouchpadClient(private val context: Context) : ConnectionClien
     private var mButtonState: Byte = 0x00
     private val clientScope = CoroutineScope(Dispatchers.Default + Job())
     private var connectJob: Job? = null
-    private val keyboardMutex = Mutex() // 💡 新增：用於保護實體鍵盤時序序列，防止交錯與卡鍵
+    private val keyboardMutex = Mutex() // 💡 用於保護實體鍵盤時序序列，防止交錯與卡鍵
 
     private val HID_DESCRIPTOR_COMBO = intArrayOf(
         0x05, 0x01, 0x09, 0x02, 0xa1, 0x01, 0x85, 0x01, 0x09, 0x01, 0xa1, 0x00, 0x05, 0x09, 0x19, 0x01,
@@ -184,7 +184,7 @@ class BluetoothHidTouchpadClient(private val context: Context) : ConnectionClien
                 sendMouseReport(dxByte, dyByte, 0)
             }
             is TouchOutEvent.Scroll -> {
-                val wheelByte = event.dy.coerceIn(-127f, 127f).toInt().toByte()
+                val wheelByte = event.dy.toInt().toByte()
                 sendMouseReport(0, 0, wheelByte)
             }
             is TouchOutEvent.Click -> {
