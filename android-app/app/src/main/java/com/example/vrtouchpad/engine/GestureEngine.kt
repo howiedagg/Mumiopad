@@ -101,12 +101,6 @@ class GestureEngine(
     private var threeFingerStartY = 0f
     private var threeFingerSwiped = false
 
-    // 💡 修改：平滑器在收到補償位移時，直接灌入步數累加器
-    private val catchupSmoother = ScrollCatchupSmoother(scope) { delta ->
-        scrollStepAccumulator += delta * getScrollSpeed()
-        triggerStepsFromAccumulator()
-    }
-
     // 💡 新增：當位移達到門檻時，同步觸發手機震動與向外發送精準整數步數
     private fun triggerStepsFromAccumulator() {
         val hapticThreshold = hapticNotchDistancePx // 24dp * density
@@ -314,7 +308,13 @@ class GestureEngine(
                         rightClickCandidate = false
                         if (abs(deltaY) > abs(deltaX)) {
                             mode = Mode.SCROLL_VERTICAL
-                            catchupSmoother.start(deltaY)
+
+                            // 💡 修正：跨過死區時，立刻同步觸發第 1 次滾動與震動（下滑送 1f，上滑送 -1f）
+                            onLocalFeedback(LocalFeedbackType.TICK)
+                            emit(TouchOutEvent.Scroll(if (deltaY > 0) 1f else -1f))
+
+                            // 💡 重置累加器為 0，從當前手指位置重新開始累積
+                            scrollStepAccumulator = 0f
                             lastScrollY = currentAvgY
                         } else {
                             mode = Mode.SWIPE_HORIZONTAL
@@ -479,7 +479,6 @@ class GestureEngine(
             }
 
             Mode.SCROLL_VERTICAL -> {
-                catchupSmoother.cancel()
                 // 💡 釋放時不需要發送殘留的微小位移，因為未滿一格不觸發滾動，符合物理滾輪體驗
             }
 
@@ -541,7 +540,6 @@ class GestureEngine(
 
     fun reset() {
         longPressJob?.cancel()
-        catchupSmoother.cancel()
         pointers.clear()
         mode = Mode.IDLE
         dragging = false
