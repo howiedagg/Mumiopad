@@ -1,3 +1,5 @@
+// D:/howie/Documents/vr-touchpad-app/vr-touchpad-app/android-app/app/src/main/java/com/example/vrtouchpad/network/WebSocketClient.kt
+
 package com.example.vrtouchpad.network
 
 import android.util.Log
@@ -58,8 +60,6 @@ class WebSocketClient(
     private var isPairingMode = false
 
     fun connectForPairing(host: String, port: Int) {
-        // 【修正 1】：在變更 pairing 標記前，先徹底關閉並清理舊連線。
-        // 這能確保舊連線因關閉而觸發的 onFailure 不會被誤判為配對失敗。
         close()
 
         isPairingMode = true
@@ -78,7 +78,6 @@ class WebSocketClient(
     }
 
     fun connectWithToken(host: String, port: Int, token: String) {
-        // 【修正 1】：先關閉並清理舊連線
         close()
 
         isPairingMode = false
@@ -94,8 +93,6 @@ class WebSocketClient(
     }
 
     private fun open(host: String, port: Int, onOpenSend: (WebSocket) -> Unit) {
-        // 【修正 1】：原有的 close() 已移至上方呼叫端，避免此處非同步賽跑
-
         val urlString = "ws://$host:$port"
         Log.d("WS_CLIENT", "準備連線至: $urlString")
 
@@ -110,7 +107,6 @@ class WebSocketClient(
 
         ws = client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
-                // 【修正 2】：安全防護，若回呼不屬於當前最新連線，直接忽略
                 if (webSocket != ws) return
                 Log.d("WS_CLIENT", "連線成功建立 (onOpen)")
                 onOpenSend(webSocket)
@@ -128,7 +124,7 @@ class WebSocketClient(
                 ws = null
                 _connState.value = ConnState.DISCONNECTED
                 if (isPairingMode) {
-                    isPairingMode = false // 清除配對標記，避免重複觸發失敗
+                    isPairingMode = false
                     onPairFail("network_error")
                 }
             }
@@ -151,7 +147,6 @@ class WebSocketClient(
         when (json.optString("type")) {
             "pair_success" -> {
                 isPairingMode = false
-                // 【新增】：配對成功時，同步更新 Socket 狀態為已連線，以便外部狀態流同步
                 _connState.value = ConnState.CONNECTED
                 val token = json.optString("token")
                 val pcName = json.optString("pc_name", "我的電腦")
@@ -188,7 +183,7 @@ class WebSocketClient(
             is TouchOutEvent.Click ->
                 """{"type":"click","button":"${event.button}","action":"${event.action}"}"""
             is TouchOutEvent.Scroll -> {
-                // 💡 修正方向：因為 PC 端的 Python 伺服器內部會先對 dy 取負值 (-dy / 55.0)，
+                // 💡 修正方向：由於 PC 端的 Python 伺服器內部會先對 dy 取負值 (-dy / 55.0)，
                 // 為了與藍牙端方向保持 100% 一致，我們在此處必須乘以 -55f 來抵消 PC 端內部的負號。
                 val finalDy = -55f * event.dy
                 """{"type":"scroll","dy":$finalDy}"""

@@ -34,7 +34,7 @@ class GestureEngine(
     private val onLocalFeedback: (LocalFeedbackType) -> Unit = {},
     private val onToggleKeyboard: () -> Unit = {},
     private val isKeyboardActive: () -> Boolean = { false }, // 判斷鍵盤狀態的回呼
-    private val getScrollSpeed: () -> Float = { 1f } // 💡 新增：動態獲取當前滾動速度的 Lambda
+    private val getScrollSpeed: () -> Float = { 1f } // 💡 動態獲取當前滾動速度的 Lambda
 ) {
     private val slopPx = 8f * density
     private val stillPx = 10f * density
@@ -48,12 +48,10 @@ class GestureEngine(
     private val multiTapWindowMs = 120L
     private val tapTimeoutMs = 280L
 
-    // 觸覺反饋與防暴衝相關參數
-    private val scrollDampeningLimitPx = 35f * density
+    // 觸覺反饋相關參數
     private val hapticNotchDistancePx = 24f * density // 可調：越小震動越密集
-    private var rawHapticAccumulator = 0f
 
-    // 💡 新增：滾動步數累加器
+    // 💡 滾動步數累加器
     private var scrollStepAccumulator = 0f
 
     private var lastHapticTwoFingerDist = 0f // 紀錄上一次觸發震動時的「絕對距離」
@@ -96,12 +94,12 @@ class GestureEngine(
 
     private var horizontalSwipeTriggered = false
 
-    // 【新增】：三指 X 軸起點，用來進行三指水平手勢判斷
+    // 三指 X 軸起點，用來進行三指水平手勢判斷
     private var threeFingerStartX = 0f
     private var threeFingerStartY = 0f
     private var threeFingerSwiped = false
 
-    // 💡 新增：當位移達到門檻時，同步觸發手機震動與向外發送精準整數步數
+    // 💡 當位移達到門檻時，同步觸發手機震動與向外發送精準整數步數
     private fun triggerStepsFromAccumulator() {
         val hapticThreshold = hapticNotchDistancePx // 24dp * density
         val steps = (scrollStepAccumulator / hapticThreshold).toInt()
@@ -171,10 +169,9 @@ class GestureEngine(
                     lastHapticTwoFingerDist = startTwoFingerDist
                 }
 
-                // 💡 將原本的 accumulatedScrollDy 改為重置新的步數累加器
+                // 💡 將累加器重置為 0，開展新的雙指滾動生命週期
                 scrollStepAccumulator = 0f
                 accumulatedZoomSteps = 0
-                rawHapticAccumulator = 0f
                 lastEmitTime = System.currentTimeMillis()
             }
             3 -> {
@@ -190,7 +187,7 @@ class GestureEngine(
                 val p2 = pointers.values.elementAtOrNull(1)
                 val p3 = pointers.values.elementAtOrNull(2)
                 if (p1 != null && p2 != null && p3 != null) {
-                    // 【修正】：同步記錄三指的 X 與 Y 平均起點
+                    // 同步記錄三指的 X 與 Y 平均起點
                     threeFingerStartX = (p1.x + p2.x + p3.x) / 3f
                     threeFingerStartY = (p1.y + p2.y + p3.y) / 3f
                 }
@@ -309,7 +306,7 @@ class GestureEngine(
                         if (abs(deltaY) > abs(deltaX)) {
                             mode = Mode.SCROLL_VERTICAL
 
-                            // 💡 修正：跨過死區時，立刻同步觸發第 1 次滾動與震動（下滑送 1f，上滑送 -1f）
+                            // 💡 跨過死區時，立刻同步觸發第 1 次滾動與震動（下滑送 1f，上滑送 -1f）
                             onLocalFeedback(LocalFeedbackType.TICK)
                             emit(TouchOutEvent.Scroll(if (deltaY > 0) 1f else -1f))
 
@@ -395,7 +392,7 @@ class GestureEngine(
                 }
             }
 
-            // 【重構】：方案 A。垂直方向操控 Win 視窗，水平方向控鍵盤（左右拉推手感）
+            // 三指 Y 軸起點，用來進行三指水平手勢判斷
             Mode.THREE_FINGER -> {
                 if (!threeFingerSwiped) {
                     val p1 = pointers.values.elementAtOrNull(0)
@@ -554,7 +551,6 @@ class GestureEngine(
         startTwoFingerDist = 0f
         lastTwoFingerDist = 0f
         lastHapticTwoFingerDist = 0f
-        rawHapticAccumulator = 0f
         horizontalSwipeTriggered = false
         threeFingerStartX = 0f
         threeFingerStartY = 0f
@@ -582,15 +578,6 @@ class GestureEngine(
         val dx = p1.x - p2.x
         val dy = p1.y - p2.y
         return sqrt(dx * dx + dy * dy)
-    }
-
-    private fun applyScrollDampening(dy: Float): Float {
-        val absDy = abs(dy)
-        if (absDy <= scrollDampeningLimitPx) return dy
-
-        val extra = absDy - scrollDampeningLimitPx
-        val dampenedAbs = scrollDampeningLimitPx + (extra * 0.25f)
-        return if (dy > 0) dampenedAbs else -dampenedAbs
     }
 
     private fun triggerZoomHaptics(rawDeltaDist: Float) { // 格線絕對對齊震動演算法

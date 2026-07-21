@@ -1,3 +1,5 @@
+// D:/howie/Documents/vr-touchpad-app/vr-touchpad-app/android-app/app/src/main/java/com/example/vrtouchpad/network/BluetoothHidTouchpadClient.kt
+
 package com.example.vrtouchpad.network
 
 import android.annotation.SuppressLint
@@ -39,7 +41,7 @@ class BluetoothHidTouchpadClient(private val context: Context) : ConnectionClien
     private var mButtonState: Byte = 0x00
     private val clientScope = CoroutineScope(Dispatchers.Default + Job())
     private var connectJob: Job? = null
-    private val keyboardMutex = Mutex() // 💡 用於保護實體鍵盤時序序列，防止交錯與卡鍵
+    private val keyboardMutex = Mutex() // 用於保護實體鍵盤時序序列，防止交錯與卡鍵
 
     private val HID_DESCRIPTOR_COMBO = intArrayOf(
         0x05, 0x01, 0x09, 0x02, 0xa1, 0x01, 0x85, 0x01, 0x09, 0x01, 0xa1, 0x00, 0x05, 0x09, 0x19, 0x01,
@@ -214,7 +216,6 @@ class BluetoothHidTouchpadClient(private val context: Context) : ConnectionClien
                     }
                 }
             }
-            // 💡 修正 1：雙指縮放「無語系干擾之數字鍵盤 + 80ms 突破掛鉤極速排隊鎖」
             is TouchOutEvent.Zoom -> {
                 val steps = event.delta.toInt()
                 Log.d("BT_DEBUG", "【手勢引擎】偵測到縮放事件, steps = $steps")
@@ -228,13 +229,12 @@ class BluetoothHidTouchpadClient(private val context: Context) : ConnectionClien
                         try {
                             repeat(loopCount) {
                                 if (isZoomIn) {
-                                    // 💡 模擬實體鍵盤：Win (0x08) + 數字鍵盤加號 Keypad Plus (0x57)
-                                    // 💡 使用 80ms 突破 Windows 輔助工具防誤觸機制，且數字鍵盤 100% 避開語系干擾
+                                    // 模擬實體鍵盤：Win (0x08) + 數字鍵盤加號 Keypad Plus (0x57)
                                     sendKeyboardReport(0x08, 0x57.toByte())
                                     delay(80)
                                     sendKeyboardReport(0x00, 0x00)
                                 } else {
-                                    // 💡 模擬實體鍵盤：Win (0x08) + 數字鍵盤減號 Keypad Minus (0x56)
+                                    // 模擬實體鍵盤：Win (0x08) + 數字鍵盤減號 Keypad Minus (0x56)
                                     sendKeyboardReport(0x08, 0x56.toByte())
                                     delay(80)
                                     sendKeyboardReport(0x00, 0x00)
@@ -265,13 +265,11 @@ class BluetoothHidTouchpadClient(private val context: Context) : ConnectionClien
                     }
                 }
             }
-            // 💡 修正 2：水平滑動「100% 不丟棄之極速排隊鎖版本」
             is TouchOutEvent.Keypress -> {
                 when (event.key) {
                     // 瀏覽器上一頁：Alt + Left Arrow
                     "BROWSER_BACK" -> {
                         clientScope.launch {
-                            // 💡 改用 withLock 確保單次手勢 100% 執行
                             keyboardMutex.withLock {
                                 try {
                                     sendKeyboardReport(0x04, 0x50.toByte())
@@ -341,6 +339,30 @@ class BluetoothHidTouchpadClient(private val context: Context) : ConnectionClien
                     delay(15)
                     sendConsumerReport(0x00)
                 }
+                // 💡 修正：映射 Android 實體返回鍵 (BROWSER_BACK) 轉為實體藍牙鍵盤 Alt (0x04) + Left Arrow (0x50)
+                "BROWSER_BACK" -> {
+                    keyboardMutex.withLock {
+                        try {
+                            sendKeyboardReport(0x04, 0x50.toByte())
+                            delay(25)
+                            sendKeyboardReport(0x00, 0x00)
+                        } finally {
+                            sendKeyboardReport(0x00, 0x00)
+                        }
+                    }
+                }
+                // 💡 修正：映射 BROWSER_FORWARD 轉為 Alt (0x04) + Right Arrow (0x4F) 以求代碼對稱完整
+                "BROWSER_FORWARD" -> {
+                    keyboardMutex.withLock {
+                        try {
+                            sendKeyboardReport(0x04, 0x4F.toByte())
+                            delay(25)
+                            sendKeyboardReport(0x00, 0x00)
+                        } finally {
+                            sendKeyboardReport(0x00, 0x00)
+                        }
+                    }
+                }
             }
         }
     }
@@ -390,7 +412,7 @@ class BluetoothHidTouchpadClient(private val context: Context) : ConnectionClien
         }
     }
 
-    // 1. 新增一個內部斷開的方法（避免操作 connectJob，防止新協程自我取消）
+    // 新增一個內部斷開的方法（避免操作 connectJob，防止新協程自我取消）
     @SuppressLint("MissingPermission")
     private fun disconnectHostInternal() {
         val hid = mHidDevice
@@ -403,7 +425,7 @@ class BluetoothHidTouchpadClient(private val context: Context) : ConnectionClien
         }
     }
 
-    // 2. 修改後的 connect 方法
+    // 修改後的 connect 方法
     @SuppressLint("MissingPermission")
     fun connect(device: BluetoothDevice) {
         val hid = mHidDevice
@@ -422,15 +444,15 @@ class BluetoothHidTouchpadClient(private val context: Context) : ConnectionClien
             // 先取消上一次可能還在嘗試連線的背景任務
             connectJob?.cancel()
 
-            // 💡 關鍵修正：若目前有其他裝置在連線中、或狀態判定為 CONNECTED，則先執行斷線與重設
+            // 關鍵修正：若目前有其他裝置在連線中、或狀態判定為 CONNECTED，則先執行斷線與重設
             if (connectedDevices.isNotEmpty() || mHostDevice != null || _connState.value == ConnState.CONNECTED) {
                 Log.d("BT_HID", "偵測到切換裝置需求：主動斷開舊裝置，再連線至新裝置: ${device.address}")
                 disconnectHostInternal()
-                _connState.value = ConnState.DISCONNECTED // 🟢 強制重設狀態，確保底下的 while 迴圈能順利執行
+                _connState.value = ConnState.DISCONNECTED // 強制重設狀態，確保底下的 while 迴圈能順利執行
             }
 
             connectJob = clientScope.launch {
-                // 💡 給予藍牙晶片 500ms 的緩衝時間，處理斷線重置的硬體狀態
+                // 給予藍牙晶片 500ms 的緩衝時間，處理斷線重置的硬體狀態
                 delay(500)
 
                 var success = false
