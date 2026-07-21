@@ -187,8 +187,12 @@ class WebSocketClient(
                 """{"type":"move","dx":${event.dx},"dy":${event.dy}}"""
             is TouchOutEvent.Click ->
                 """{"type":"click","button":"${event.button}","action":"${event.action}"}"""
-            is TouchOutEvent.Scroll ->
-                """{"type":"scroll","dy":${event.dy}}"""
+            is TouchOutEvent.Scroll -> {
+                // 💡 修正方向：因為 PC 端的 Python 伺服器內部會先對 dy 取負值 (-dy / 55.0)，
+                // 為了與藍牙端方向保持 100% 一致，我們在此處必須乘以 -55f 來抵消 PC 端內部的負號。
+                val finalDy = -55f * event.dy
+                """{"type":"scroll","dy":$finalDy}"""
+            }
             is TouchOutEvent.Zoom ->
                 """{"type":"zoom","delta":${event.delta}}"""
             is TouchOutEvent.Gesture ->

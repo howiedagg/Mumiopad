@@ -152,6 +152,10 @@ def apply_click(button: str, action: str):
 def apply_scroll(dy: float):
     global accumulated_scroll_y
     y_delta = -dy / 55.0
+    
+    if (y_delta > 0 and accumulated_scroll_y < 0) or (y_delta < 0 and accumulated_scroll_y > 0):
+        accumulated_scroll_y = 0.0
+
     accumulated_scroll_y += y_delta
     steps = int(accumulated_scroll_y)
     if steps != 0:
