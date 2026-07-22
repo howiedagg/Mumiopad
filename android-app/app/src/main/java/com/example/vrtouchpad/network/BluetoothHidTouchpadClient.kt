@@ -337,6 +337,17 @@ class BluetoothHidTouchpadClient(private val context: Context) : ConnectionClien
                     delay(10)
                     sendKeyboardReport(0x00, 0x00)
                 }
+                // 💡 新增：藍牙 HID 方向鍵向左 (0x50) 與向右 (0x4F)
+                SystemKey.LEFT -> {
+                    sendKeyboardReport(0x00, 0x50.toByte())
+                    delay(15)
+                    sendKeyboardReport(0x00, 0x00)
+                }
+                SystemKey.RIGHT -> {
+                    sendKeyboardReport(0x00, 0x4F.toByte())
+                    delay(15)
+                    sendKeyboardReport(0x00, 0x00)
+                }
                 SystemKey.VOLUME_UP -> {
                     sendConsumerReport(0x01)
                     delay(15)

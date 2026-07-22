@@ -13,7 +13,7 @@ import kotlin.math.sqrt
 // 💡 強型別 Enum 定義，杜絕字串硬編碼
 enum class MouseButton { LEFT, RIGHT, MIDDLE }
 enum class ClickAction { DOWN, UP, CLICK }
-enum class SystemKey { BROWSER_BACK, BROWSER_FORWARD, VOLUME_UP, VOLUME_DOWN, BACKSPACE, ENTER }
+enum class SystemKey { BROWSER_BACK, BROWSER_FORWARD, VOLUME_UP, VOLUME_DOWN, BACKSPACE, ENTER, LEFT, RIGHT }
 enum class GestureType { DESKTOP, MULTITASK }
 enum class GestureDirection { UP, DOWN, TAP }
 
@@ -36,17 +36,18 @@ enum class LocalFeedbackType {
 class GestureEngine(
     private val scope: CoroutineScope,
     private val density: Float,
-    private val longPressMs: Long = 200,
+    private val longPressMs: Long = 350, // 全局統一長按鎖定時間：350ms
     private val emit: (TouchOutEvent) -> Unit,
     private val onLocalFeedback: (LocalFeedbackType) -> Unit = {},
     private val onToggleKeyboard: () -> Unit = {},
     private val isKeyboardActive: () -> Boolean = { false },
     private val getScrollSpeed: () -> Float = { 1f }
 ) {
-    private val slopPx = 8f * density
-    private val stillPx = 10f * density
+    private val slopPx = 8f * density                       // 8dp (全局點擊死區門檻)
+    private val stillPx = 10f * density                     // 10dp (全局長按靜止防抖區)
     private val dragStartSlopPx = 1.5f * density
-    private val scrollActivationSlopPx = 32f * density
+    private val swipeActivationSlopPx = 18f * density      // 18dp (影片快進門檻)
+    private val scrollActivationSlopPx = 32f * density     // 32dp (網頁滾動門檻)
     private val zoomActivationSlopPx = 25f * density
     private val zoomHapticDistancePx = 30f * density
     private val swipeThresholdPx = 48f * density
@@ -62,15 +63,18 @@ class GestureEngine(
     private var scrollStepAccumulator = 0f
     private var lastHapticTwoFingerDist = 0f
 
-    // 💡 雙指接力（Hand-off）緩衝與控制變數
-    private val handOffTimeoutMs = 200L
+    // 雙指接力（Hand-off）緩衝變數
     private var handOffJob: Job? = null
     private var isHandOffPending = false
     private var handOffPrimaryId: Long? = null
     private var handOffSecondaryId: Long? = null
 
+    // 雙指長按右鍵拖曳計時器
+    private var twoFingerLongPressJob: Job? = null
+
     private enum class Mode {
         IDLE, MOVE, PREDRAG_WAIT, DRAG, TWO_FINGER_WAIT,
+        RIGHT_DRAG, // 雙指長按右鍵拖曳模式
         SCROLL_VERTICAL, SWIPE_HORIZONTAL, ZOOM, THREE_FINGER, FOUR_FINGER
     }
 
@@ -167,6 +171,37 @@ class GestureEngine(
         accumulatedZoomSteps = 0
         rawHapticAccumulator = 0f
         lastEmitTime = System.currentTimeMillis()
+
+        // 啟動二指長按計時器（350ms 鎖定右鍵拖曳）
+        startTwoFingerLongPressWatcher()
+    }
+
+    private fun startTwoFingerLongPressWatcher() {
+        twoFingerLongPressJob?.cancel()
+        twoFingerLongPressJob = scope.launch {
+            delay(longPressMs) // 350ms
+            if (mode == Mode.TWO_FINGER_WAIT && pointers.size == 2) {
+                val p1 = pointers.values.elementAtOrNull(0)
+                val p2 = pointers.values.elementAtOrNull(1)
+                if (p1 != null && p2 != null && dist(p1) < stillPx && dist(p2) < stillPx) {
+                    rightClickCandidate = false
+                    mode = Mode.RIGHT_DRAG
+
+                    // 💡 雙指右鍵鎖定：廢棄第一指，第二指獨佔 1:1 主控權
+                    val secondFingerId = pointers.keys.elementAtOrNull(1) ?: pointers.keys.last()
+                    firstFingerId = secondFingerId
+
+                    val activePointer = pointers[secondFingerId]
+                    if (activePointer != null) {
+                        activePointer.startX = activePointer.x
+                        activePointer.startY = activePointer.y
+                    }
+
+                    emit(TouchOutEvent.Click(MouseButton.RIGHT, ClickAction.DOWN))
+                    onLocalFeedback(LocalFeedbackType.PRESS_LOCK)
+                }
+            }
+        }
     }
 
     fun onDown(id: Long, x: Float, y: Float) {
@@ -190,10 +225,9 @@ class GestureEngine(
                 twoFingerDownTime = System.currentTimeMillis()
 
                 val p1 = pointers[firstFingerId]
-                // 檢查第一指在第二指放下前，是否已經有明確的滑動位移
                 val isFirstFingerMoving = p1 != null && dist(p1) >= slopPx
 
-                // 💡 關鍵修復：只有在【正在拖曳】或【第一指已經在滑動】時，才進入接力觀望！
+                // 💡 拖曳中或第一指滑動中 ➔ 啟動交疊接力觀望
                 if (dragging || isFirstFingerMoving) {
                     isHandOffPending = true
                     handOffPrimaryId = firstFingerId
@@ -204,6 +238,7 @@ class GestureEngine(
                         it.startY = it.y
                     }
 
+                    // 拖曳給予 800ms 交疊容錯，普通滑動給予 180ms
                     val currentTimeout = if (dragging) 800L else 180L
 
                     handOffJob = scope.launch {
@@ -214,11 +249,12 @@ class GestureEngine(
                         }
                     }
                 } else {
-                    // 第一指沒動（雙指同時點下，或單指按著不動）➔ 秒切標準雙指模式（支援雙指右鍵與瞬間滾動！）
                     executeTwoFingerWaitSetup()
                 }
             }
             3 -> {
+                longPressJob?.cancel()
+                twoFingerLongPressJob?.cancel()
                 handOffJob?.cancel()
                 isHandOffPending = false
 
@@ -240,6 +276,8 @@ class GestureEngine(
                 threeFingerSwiped = false
             }
             4 -> {
+                longPressJob?.cancel()
+                twoFingerLongPressJob?.cancel()
                 handOffJob?.cancel()
                 isHandOffPending = false
 
@@ -262,53 +300,32 @@ class GestureEngine(
 
         val now = System.currentTimeMillis()
 
-        // 💡 關鍵修正：觀望期處理
         if (isHandOffPending) {
-            if (dragging) {
-                // 拖曳狀態：第一指繼續拉動視窗
-                if (id == handOffPrimaryId) {
-                    accumulatedDragDx += dx
-                    accumulatedDragDy += dy
-                    if (now - lastEmitTime >= emitIntervalMs) {
-                        if (accumulatedDragDx != 0f || accumulatedDragDy != 0f) {
-                            emit(TouchOutEvent.Move(accumulatedDragDx, accumulatedDragDy))
-                            accumulatedDragDx = 0f
-                            accumulatedDragDy = 0f
-                        }
-                        lastEmitTime = now
-                    }
-                }
-                return
-            } else {
-                // 普通移動：檢查【第二指】是否有滑動
-                val p2 = pointers[handOffSecondaryId]
-                if (p2 != null) {
-                    val dist2 = sqrt((p2.x - p2.startX) * (p2.x - p2.startX) + (p2.y - p2.startY) * (p2.y - p2.startY))
+            val p2 = pointers[handOffSecondaryId]
+            if (p2 != null) {
+                val dist2 = sqrt((p2.x - p2.startX) * (p2.x - p2.startX) + (p2.y - p2.startY) * (p2.y - p2.startY))
 
-                    // 💡 漏洞 2 修復：只有當【第二指也開始滑動】時，才切換雙指滾動模式！
-                    if (dist2 >= slopPx * 1.2f) {
-                        handOffJob?.cancel()
-                        isHandOffPending = false
-                        executeTwoFingerWaitSetup()
-                        return
-                    }
+                if (dist2 >= slopPx * 1.2f) {
+                    handOffJob?.cancel()
+                    isHandOffPending = false
+                    executeTwoFingerWaitSetup()
+                    return
                 }
-
-                // 💡 第二指沒滑動（只是點擊或按著），第一指繼續順暢移動鼠標！
-                if (id == handOffPrimaryId) {
-                    accumulatedDx += dx
-                    accumulatedDy += dy
-                    if (now - lastEmitTime >= emitIntervalMs) {
-                        if (accumulatedDx != 0f || accumulatedDy != 0f) {
-                            emit(TouchOutEvent.Move(accumulatedDx, accumulatedDy))
-                            accumulatedDx = 0f
-                            accumulatedDy = 0f
-                        }
-                        lastEmitTime = now
-                    }
-                }
-                return
             }
+
+            if (id == handOffPrimaryId) {
+                accumulatedDx += dx
+                accumulatedDy += dy
+                if (now - lastEmitTime >= emitIntervalMs) {
+                    if (accumulatedDx != 0f || accumulatedDy != 0f) {
+                        emit(TouchOutEvent.Move(accumulatedDx, accumulatedDy))
+                        accumulatedDx = 0f
+                        accumulatedDy = 0f
+                    }
+                    lastEmitTime = now
+                }
+            }
+            return
         }
 
         when (mode) {
@@ -358,7 +375,10 @@ class GestureEngine(
             }
 
             Mode.TWO_FINGER_WAIT -> {
-                if (dist(p) >= slopPx) rightClickCandidate = false
+                if (dist(p) >= slopPx) {
+                    rightClickCandidate = false
+                    twoFingerLongPressJob?.cancel()
+                }
 
                 val p1 = pointers.values.elementAtOrNull(0)
                 val p2 = pointers.values.elementAtOrNull(1)
@@ -389,20 +409,38 @@ class GestureEngine(
 
                     if (abs(deltaDist) >= zoomActivationSlopPx && !isMovingInSameDirection && bothMoved) {
                         rightClickCandidate = false
+                        twoFingerLongPressJob?.cancel()
                         mode = Mode.ZOOM
                         lastTwoFingerDist = currentDist
                         lastHapticTwoFingerDist = currentDist
                         triggerZoomHaptics(deltaDist)
-                    } else if (max(abs(deltaX), abs(deltaY)) >= scrollActivationSlopPx) {
+                    } else if (abs(deltaY) >= scrollActivationSlopPx && abs(deltaY) > abs(deltaX)) {
                         rightClickCandidate = false
-                        if (abs(deltaY) > abs(deltaX)) {
-                            mode = Mode.SCROLL_VERTICAL
-                            catchupSmoother.start(deltaY)
-                            lastScrollY = currentAvgY
-                        } else {
-                            mode = Mode.SWIPE_HORIZONTAL
-                            horizontalSwipeTriggered = false
+                        twoFingerLongPressJob?.cancel()
+                        mode = Mode.SCROLL_VERTICAL
+                        catchupSmoother.start(deltaY)
+                        lastScrollY = currentAvgY
+                    } else if (abs(deltaX) >= swipeActivationSlopPx && abs(deltaX) > abs(deltaY)) {
+                        rightClickCandidate = false
+                        twoFingerLongPressJob?.cancel()
+                        mode = Mode.SWIPE_HORIZONTAL
+                        horizontalSwipeTriggered = false
+                    }
+                }
+            }
+
+            Mode.RIGHT_DRAG -> {
+                if (id == firstFingerId) {
+                    accumulatedDragDx += dx
+                    accumulatedDragDy += dy
+
+                    if (now - lastEmitTime >= emitIntervalMs) {
+                        if (accumulatedDragDx != 0f || accumulatedDragDy != 0f) {
+                            emit(TouchOutEvent.Move(accumulatedDragDx, accumulatedDragDy))
+                            accumulatedDragDx = 0f
+                            accumulatedDragDy = 0f
                         }
+                        lastEmitTime = now
                     }
                 }
             }
@@ -459,12 +497,12 @@ class GestureEngine(
                     val startAvgX = (p1.startX + p2.startX) / 2
                     val deltaX = currentAvgX - startAvgX
 
-                    if (deltaX >= swipeThresholdPx) {
-                        emit(TouchOutEvent.Keypress(SystemKey.BROWSER_BACK))
-                        horizontalSwipeTriggered = true
-                        onLocalFeedback(LocalFeedbackType.TICK)
-                    } else if (deltaX <= -swipeThresholdPx) {
-                        emit(TouchOutEvent.Keypress(SystemKey.BROWSER_FORWARD))
+                    if (abs(deltaX) >= swipeActivationSlopPx) {
+                        if (deltaX > 0) {
+                            emit(TouchOutEvent.Keypress(SystemKey.RIGHT))
+                        } else {
+                            emit(TouchOutEvent.Keypress(SystemKey.LEFT))
+                        }
                         horizontalSwipeTriggered = true
                         onLocalFeedback(LocalFeedbackType.TICK)
                     }
@@ -512,7 +550,6 @@ class GestureEngine(
             isHandOffPending = false
 
             if (id == handOffPrimaryId) {
-                // 第一指抬起：接力成功！
                 pointers.remove(id)
                 val newPrimaryId = handOffSecondaryId ?: pointers.keys.firstOrNull()
                 if (newPrimaryId != null) {
@@ -531,10 +568,11 @@ class GestureEngine(
                 }
                 return
             } else if (id == handOffSecondaryId) {
-                // 💡 第二指抬起：計算點擊時間！
+                val p2 = pointers[id]
+                val movedDist = if (p2 != null) dist(p2) else 0f
                 val tapDuration = System.currentTimeMillis() - twoFingerDownTime
-                if (tapDuration <= tapTimeoutMs && !dragging) {
-                    // 一指滑動中，第二指快速點一下 ➔ 順暢觸發滑鼠左鍵點擊！
+
+                if (tapDuration <= tapTimeoutMs && movedDist < slopPx && !dragging) {
                     emit(TouchOutEvent.Click(MouseButton.LEFT, ClickAction.CLICK))
                     onLocalFeedback(LocalFeedbackType.TICK)
                 }
@@ -570,7 +608,10 @@ class GestureEngine(
             Mode.DRAG -> if (id == firstFingerId) {
                 if (accumulatedDragDx != 0f || accumulatedDragDy != 0f) {
                     emit(TouchOutEvent.Move(accumulatedDragDx, accumulatedDragDy))
+                    accumulatedDragDx = 0f
+                    accumulatedDragDy = 0f
                 }
+                // 💡 關鍵：手指離開螢幕，0ms 秒發 Left Up！放開視窗乾脆俐落！
                 emit(TouchOutEvent.Click(MouseButton.LEFT, ClickAction.UP))
                 dragging = false
                 mode = Mode.IDLE
@@ -578,13 +619,33 @@ class GestureEngine(
             }
 
             Mode.TWO_FINGER_WAIT -> {
+                twoFingerLongPressJob?.cancel()
                 val tapDuration = System.currentTimeMillis() - twoFingerDownTime
-                if (tapDuration <= tapTimeoutMs) {
+                val p2 = pointers[id]
+                val movedDist = if (p2 != null) dist(p2) else 0f
+
+                if (tapDuration <= tapTimeoutMs && movedDist < slopPx) {
                     if (rightClickCandidate) {
                         emit(TouchOutEvent.Click(MouseButton.RIGHT, ClickAction.CLICK))
                     } else if (id != firstFingerId) {
                         emit(TouchOutEvent.Click(MouseButton.LEFT, ClickAction.CLICK))
                     }
+                }
+            }
+
+            Mode.RIGHT_DRAG -> {
+                if (id != firstFingerId) {
+                    pointers.remove(id)
+                    return
+                } else {
+                    if (accumulatedDragDx != 0f || accumulatedDragDy != 0f) {
+                        emit(TouchOutEvent.Move(accumulatedDragDx, accumulatedDragDy))
+                        accumulatedDragDx = 0f
+                        accumulatedDragDy = 0f
+                    }
+                    emit(TouchOutEvent.Click(MouseButton.RIGHT, ClickAction.UP))
+                    mode = Mode.IDLE
+                    onLocalFeedback(LocalFeedbackType.RELEASE_LOCK)
                 }
             }
 
@@ -649,6 +710,7 @@ class GestureEngine(
 
     fun reset() {
         longPressJob?.cancel()
+        twoFingerLongPressJob?.cancel()
         handOffJob?.cancel()
         catchupSmoother.cancel()
         pointers.clear()
