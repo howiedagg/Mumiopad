@@ -692,7 +692,7 @@ class GestureEngine(
 
             Mode.FOUR_FINGER -> {
                 if (dist(p) < slopPx * 3f) {
-                    onLocalFeedback(LocalFeedbackType.TICK)
+                    onLocalFeedback(LocalFeedbackType.CLICK) // 👈 原本是 TICK，改成 CLICK
                     emit(TouchOutEvent.Click(MouseButton.MIDDLE, ClickAction.CLICK))
                 }
                 mode = Mode.IDLE
