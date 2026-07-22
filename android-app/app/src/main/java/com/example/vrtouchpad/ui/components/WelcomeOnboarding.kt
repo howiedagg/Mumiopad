@@ -15,6 +15,9 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Bluetooth
+import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -24,7 +27,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.example.vrtouchpad.R
 import com.example.vrtouchpad.data.DiscoveredServer
 import com.example.vrtouchpad.network.ConnState
@@ -91,7 +93,7 @@ fun WelcomeOnboarding(
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Text(
-                            text = stringResource(R.string.app_name), // 💡 修正：移除硬編碼，使用系統語系檔定義的品牌名稱
+                            text = stringResource(R.string.app_name),
                             style = MaterialTheme.typography.headlineLarge,
                             color = Color.White
                         )
@@ -115,7 +117,12 @@ fun WelcomeOnboarding(
                                 contentAlignment = Alignment.Center
                             ) {
                                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                    Text("📶", fontSize = 28.sp)
+                                    Icon(
+                                        imageVector = Icons.Default.Wifi,
+                                        contentDescription = null,
+                                        tint = Color.White,
+                                        modifier = Modifier.size(36.dp)
+                                    )
                                     Spacer(Modifier.height(10.dp))
                                     Text(
                                         text = stringResource(R.string.onboarding_choice_wifi),
@@ -139,7 +146,12 @@ fun WelcomeOnboarding(
                                 contentAlignment = Alignment.Center
                             ) {
                                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                    Text("ᛒ", fontSize = 28.sp)
+                                    Icon(
+                                        imageVector = Icons.Default.Bluetooth,
+                                        contentDescription = null,
+                                        tint = Color.White,
+                                        modifier = Modifier.size(36.dp)
+                                    )
                                     Spacer(Modifier.height(10.dp))
                                     Text(
                                         text = stringResource(R.string.onboarding_choice_bluetooth),

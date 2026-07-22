@@ -10,13 +10,20 @@ import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.sqrt
 
+// 💡 強型別 Enum 定義
+enum class MouseButton { LEFT, RIGHT, MIDDLE }
+enum class ClickAction { DOWN, UP, CLICK }
+enum class SystemKey { BROWSER_BACK, BROWSER_FORWARD, VOLUME_UP, VOLUME_DOWN, BACKSPACE, ENTER }
+enum class GestureType { DESKTOP, MULTITASK }
+enum class GestureDirection { UP, DOWN, TAP }
+
 sealed class TouchOutEvent {
     data class Move(val dx: Float, val dy: Float) : TouchOutEvent()
-    data class Click(val button: String, val action: String) : TouchOutEvent()
+    data class Click(val button: MouseButton, val action: ClickAction) : TouchOutEvent()
     data class Scroll(val dy: Float) : TouchOutEvent()
     data class Zoom(val delta: Float) : TouchOutEvent() // 縮放事件（此處 delta 將傳送精準的整數步數）
-    data class Gesture(val name: String, val direction: String) : TouchOutEvent()
-    data class Keypress(val key: String) : TouchOutEvent()
+    data class Gesture(val name: GestureType, val direction: GestureDirection) : TouchOutEvent()
+    data class Keypress(val key: SystemKey) : TouchOutEvent()
 }
 
 enum class LocalFeedbackType {
@@ -144,7 +151,7 @@ class GestureEngine(
                         accumulatedDragDx = 0f
                         accumulatedDragDy = 0f
                     }
-                    emit(TouchOutEvent.Click("left", "up"))
+                    emit(TouchOutEvent.Click(MouseButton.LEFT, ClickAction.UP))
                     dragging = false
                     onLocalFeedback(LocalFeedbackType.RELEASE_LOCK)
                 }
@@ -233,7 +240,7 @@ class GestureEngine(
             Mode.PREDRAG_WAIT -> if (id == firstFingerId && dist(p) >= dragStartSlopPx) {
                 dragging = true
                 mode = Mode.DRAG
-                emit(TouchOutEvent.Click("left", "down"))
+                emit(TouchOutEvent.Click(MouseButton.LEFT, ClickAction.DOWN))
 
                 accumulatedDragDx = p.x - p.startX
                 accumulatedDragDy = p.y - p.startY
@@ -381,11 +388,11 @@ class GestureEngine(
                     val deltaX = currentAvgX - startAvgX
 
                     if (deltaX >= swipeThresholdPx) {
-                        emit(TouchOutEvent.Keypress("BROWSER_BACK"))
+                        emit(TouchOutEvent.Keypress(SystemKey.BROWSER_BACK))
                         horizontalSwipeTriggered = true
                         onLocalFeedback(LocalFeedbackType.TICK)
                     } else if (deltaX <= -swipeThresholdPx) {
-                        emit(TouchOutEvent.Keypress("BROWSER_FORWARD"))
+                        emit(TouchOutEvent.Keypress(SystemKey.BROWSER_FORWARD))
                         horizontalSwipeTriggered = true
                         onLocalFeedback(LocalFeedbackType.TICK)
                     }
@@ -411,10 +418,10 @@ class GestureEngine(
                             onLocalFeedback(LocalFeedbackType.TICK)
                             if (deltaY >= 0) {
                                 // 垂直下滑：顯示桌面 / 最小化所有視窗 (Win + D)
-                                emit(TouchOutEvent.Gesture("desktop", "down"))
+                                emit(TouchOutEvent.Gesture(GestureType.DESKTOP, GestureDirection.DOWN))
                             } else {
                                 // 垂直上滑：還原所有視窗 (再次 Win + D)
-                                emit(TouchOutEvent.Gesture("desktop", "up"))
+                                emit(TouchOutEvent.Gesture(GestureType.DESKTOP, GestureDirection.UP))
                             }
                         } else if (abs(deltaX) >= swipeThresholdPx && abs(deltaX) > abs(deltaY)) {
                             threeFingerSwiped = true
@@ -443,13 +450,13 @@ class GestureEngine(
                     accumulatedDy = 0f
                 }
                 if (dist(p) < slopPx && !transitionedFromMultiTouch) {
-                    emit(TouchOutEvent.Click("left", "click"))
+                    emit(TouchOutEvent.Click(MouseButton.LEFT, ClickAction.CLICK))
                 }
                 mode = Mode.IDLE
             }
 
             Mode.PREDRAG_WAIT -> if (id == firstFingerId) {
-                emit(TouchOutEvent.Click("left", "click"))
+                emit(TouchOutEvent.Click(MouseButton.LEFT, ClickAction.CLICK))
                 mode = Mode.IDLE
                 onLocalFeedback(LocalFeedbackType.RELEASE_LOCK)
             }
@@ -458,7 +465,7 @@ class GestureEngine(
                 if (accumulatedDragDx != 0f || accumulatedDragDy != 0f) {
                     emit(TouchOutEvent.Move(accumulatedDragDx, accumulatedDragDy))
                 }
-                emit(TouchOutEvent.Click("left", "up"))
+                emit(TouchOutEvent.Click(MouseButton.LEFT, ClickAction.UP))
                 dragging = false
                 mode = Mode.IDLE
                 onLocalFeedback(LocalFeedbackType.RELEASE_LOCK)
@@ -468,9 +475,9 @@ class GestureEngine(
                 val tapDuration = System.currentTimeMillis() - twoFingerDownTime
                 if (tapDuration <= tapTimeoutMs) {
                     if (rightClickCandidate) {
-                        emit(TouchOutEvent.Click("right", "click"))
+                        emit(TouchOutEvent.Click(MouseButton.RIGHT, ClickAction.CLICK))
                     } else if (id != firstFingerId) {
-                        emit(TouchOutEvent.Click("left", "click"))
+                        emit(TouchOutEvent.Click(MouseButton.LEFT, ClickAction.CLICK))
                     }
                 }
             }
@@ -491,7 +498,7 @@ class GestureEngine(
 
             Mode.THREE_FINGER -> {
                 if (!threeFingerSwiped && dist(p) < slopPx * 2f) {
-                    emit(TouchOutEvent.Gesture("multitask", "tap"))
+                    emit(TouchOutEvent.Gesture(GestureType.MULTITASK, GestureDirection.TAP))
                 }
                 mode = Mode.IDLE
             }
@@ -500,7 +507,7 @@ class GestureEngine(
                 // 四指點擊（tap）改成「滑鼠中鍵點擊」，不再切換鍵盤
                 if (dist(p) < slopPx * 3f) {
                     onLocalFeedback(LocalFeedbackType.TICK)
-                    emit(TouchOutEvent.Click("middle", "click")) // 發送中鍵點擊事件給 PC
+                    emit(TouchOutEvent.Click(MouseButton.MIDDLE, ClickAction.CLICK)) // 發送中鍵點擊事件給 PC
                 }
                 mode = Mode.IDLE
             }

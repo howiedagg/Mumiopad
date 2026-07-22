@@ -11,6 +11,11 @@ import android.bluetooth.BluetoothHidDeviceAppSdpSettings
 import android.bluetooth.BluetoothProfile
 import android.content.Context
 import android.util.Log
+import com.example.vrtouchpad.engine.ClickAction
+import com.example.vrtouchpad.engine.GestureDirection
+import com.example.vrtouchpad.engine.GestureType
+import com.example.vrtouchpad.engine.MouseButton
+import com.example.vrtouchpad.engine.SystemKey
 import com.example.vrtouchpad.engine.TouchOutEvent
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -39,6 +44,7 @@ class BluetoothHidTouchpadClient(private val context: Context) : ConnectionClien
     val isAppRegistered: StateFlow<Boolean> = _isAppRegistered
 
     private var mButtonState: Byte = 0x00
+    private var mScrollAccumulator: Float = 0f
     private val clientScope = CoroutineScope(Dispatchers.Default + Job())
     private var connectJob: Job? = null
     private val keyboardMutex = Mutex() // 用於保護實體鍵盤時序序列，防止交錯與卡鍵
@@ -181,6 +187,7 @@ class BluetoothHidTouchpadClient(private val context: Context) : ConnectionClien
     override fun sendEvent(event: TouchOutEvent) {
         when (event) {
             is TouchOutEvent.Move -> {
+                mScrollAccumulator = 0f
                 val dxByte = event.dx.coerceIn(-127f, 127f).toInt().toByte()
                 val dyByte = event.dy.coerceIn(-127f, 127f).toInt().toByte()
                 sendMouseReport(dxByte, dyByte, 0)
@@ -190,22 +197,22 @@ class BluetoothHidTouchpadClient(private val context: Context) : ConnectionClien
                 sendMouseReport(0, 0, wheelByte)
             }
             is TouchOutEvent.Click -> {
+                mScrollAccumulator = 0f
                 val bitMask: Byte = when (event.button) {
-                    "left" -> 0x01
-                    "right" -> 0x02
-                    "middle" -> 0x04
-                    else -> 0x00
+                    MouseButton.LEFT -> 0x01
+                    MouseButton.RIGHT -> 0x02
+                    MouseButton.MIDDLE -> 0x04
                 }
                 when (event.action) {
-                    "down" -> {
+                    ClickAction.DOWN -> {
                         mButtonState = (mButtonState.toInt() or bitMask.toInt()).toByte()
                         sendMouseReport(0, 0, 0)
                     }
-                    "up" -> {
+                    ClickAction.UP -> {
                         mButtonState = (mButtonState.toInt() and bitMask.toInt().inv()).toByte()
                         sendMouseReport(0, 0, 0)
                     }
-                    "click" -> {
+                    ClickAction.CLICK -> {
                         clientScope.launch {
                             mButtonState = (mButtonState.toInt() or bitMask.toInt()).toByte()
                             sendMouseReport(0, 0, 0)
@@ -249,14 +256,14 @@ class BluetoothHidTouchpadClient(private val context: Context) : ConnectionClien
             }
             is TouchOutEvent.Gesture -> {
                 when {
-                    event.name == "desktop" && (event.direction == "down" || event.direction == "up") -> {
+                    event.name == GestureType.DESKTOP && (event.direction == GestureDirection.DOWN || event.direction == GestureDirection.UP) -> {
                         clientScope.launch {
                             sendKeyboardReport(0x08, 0x07.toByte())
                             delay(15)
                             sendKeyboardReport(0x00, 0x00)
                         }
                     }
-                    event.name == "multitask" && event.direction == "tap" -> {
+                    event.name == GestureType.MULTITASK && event.direction == GestureDirection.TAP -> {
                         clientScope.launch {
                             sendKeyboardReport(0x08, 0x2B.toByte())
                             delay(15)
@@ -268,7 +275,7 @@ class BluetoothHidTouchpadClient(private val context: Context) : ConnectionClien
             is TouchOutEvent.Keypress -> {
                 when (event.key) {
                     // 瀏覽器上一頁：Alt + Left Arrow
-                    "BROWSER_BACK" -> {
+                    SystemKey.BROWSER_BACK -> {
                         clientScope.launch {
                             keyboardMutex.withLock {
                                 try {
@@ -282,7 +289,7 @@ class BluetoothHidTouchpadClient(private val context: Context) : ConnectionClien
                         }
                     }
                     // 瀏覽器下一頁：Alt + Right Arrow
-                    "BROWSER_FORWARD" -> {
+                    SystemKey.BROWSER_FORWARD -> {
                         clientScope.launch {
                             keyboardMutex.withLock {
                                 try {
@@ -295,6 +302,7 @@ class BluetoothHidTouchpadClient(private val context: Context) : ConnectionClien
                             }
                         }
                     }
+                    else -> Unit
                 }
             }
         }
@@ -316,31 +324,31 @@ class BluetoothHidTouchpadClient(private val context: Context) : ConnectionClien
         }
     }
 
-    override fun sendKeypress(key: String) {
+    override fun sendKeypress(key: SystemKey) {
         clientScope.launch {
             when (key) {
-                "BACKSPACE" -> {
+                SystemKey.BACKSPACE -> {
                     sendKeyboardReport(0x00, 0x2A.toByte())
                     delay(10)
                     sendKeyboardReport(0x00, 0x00)
                 }
-                "ENTER" -> {
+                SystemKey.ENTER -> {
                     sendKeyboardReport(0x00, 0x28.toByte())
                     delay(10)
                     sendKeyboardReport(0x00, 0x00)
                 }
-                "VOLUME_UP" -> {
+                SystemKey.VOLUME_UP -> {
                     sendConsumerReport(0x01)
                     delay(15)
                     sendConsumerReport(0x00)
                 }
-                "VOLUME_DOWN" -> {
+                SystemKey.VOLUME_DOWN -> {
                     sendConsumerReport(0x02)
                     delay(15)
                     sendConsumerReport(0x00)
                 }
-                // 💡 修正：映射 Android 實體返回鍵 (BROWSER_BACK) 轉為實體藍牙鍵盤 Alt (0x04) + Left Arrow (0x50)
-                "BROWSER_BACK" -> {
+                // 映射 Android 實體返回鍵 (BROWSER_BACK) 轉為實體藍牙鍵盤 Alt (0x04) + Left Arrow (0x50)
+                SystemKey.BROWSER_BACK -> {
                     keyboardMutex.withLock {
                         try {
                             sendKeyboardReport(0x04, 0x50.toByte())
@@ -351,8 +359,8 @@ class BluetoothHidTouchpadClient(private val context: Context) : ConnectionClien
                         }
                     }
                 }
-                // 💡 修正：映射 BROWSER_FORWARD 轉為 Alt (0x04) + Right Arrow (0x4F) 以求代碼對稱完整
-                "BROWSER_FORWARD" -> {
+                // 映射 BROWSER_FORWARD 轉為 Alt (0x04) + Right Arrow (0x4F)
+                SystemKey.BROWSER_FORWARD -> {
                     keyboardMutex.withLock {
                         try {
                             sendKeyboardReport(0x04, 0x4F.toByte())
@@ -363,6 +371,7 @@ class BluetoothHidTouchpadClient(private val context: Context) : ConnectionClien
                         }
                     }
                 }
+                else -> Unit
             }
         }
     }
@@ -412,7 +421,7 @@ class BluetoothHidTouchpadClient(private val context: Context) : ConnectionClien
         }
     }
 
-    // 新增一個內部斷開的方法（避免操作 connectJob，防止新協程自我取消）
+    // 內部斷開的方法（避免操作 connectJob，防止新協程自我取消）
     @SuppressLint("MissingPermission")
     private fun disconnectHostInternal() {
         val hid = mHidDevice
@@ -425,7 +434,6 @@ class BluetoothHidTouchpadClient(private val context: Context) : ConnectionClien
         }
     }
 
-    // 修改後的 connect 方法
     @SuppressLint("MissingPermission")
     fun connect(device: BluetoothDevice) {
         val hid = mHidDevice

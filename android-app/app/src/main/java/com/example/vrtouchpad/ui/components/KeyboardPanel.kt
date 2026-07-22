@@ -19,12 +19,13 @@ import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
+import com.example.vrtouchpad.engine.SystemKey
 
 @Composable
 fun InvisibleKeyboardInput(
     active: Boolean,
     onSendText: (String) -> Unit,
-    onSendKey: (String) -> Unit,
+    onSendKey: (SystemKey) -> Unit,
     onKeyboardDismissed: () -> Unit
 ) {
     if (!active) return
@@ -80,7 +81,7 @@ fun InvisibleKeyboardInput(
                     newText.length < oldText.length -> {
                         val diff = oldText.length - newText.length
                         repeat(diff) {
-                            onSendKey("BACKSPACE")
+                            onSendKey(SystemKey.BACKSPACE)
                         }
                         if (newText.length < 100) {
                             textFieldValue = TextFieldValue(text = anchorText, selection = TextRange(anchorText.length))
@@ -92,7 +93,7 @@ fun InvisibleKeyboardInput(
                         if (newText.length > oldText.length) {
                             val committed = newText.substring(oldText.length)
                             if (committed.contains("\n")) {
-                                onSendKey("ENTER")
+                                onSendKey(SystemKey.ENTER)
                             } else {
                                 onSendText(committed)
                             }

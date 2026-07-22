@@ -50,6 +50,7 @@ import com.example.vrtouchpad.network.ConnState
 
 import com.example.vrtouchpad.data.PairingManager
 import com.example.vrtouchpad.data.SettingsStore
+import com.example.vrtouchpad.engine.SystemKey
 import com.example.vrtouchpad.data.WifiPerformanceManager
 import com.example.vrtouchpad.data.WifiNetworkIdProvider
 import com.example.vrtouchpad.data.NetworkProfileStore
@@ -150,11 +151,11 @@ class MainActivity : ComponentActivity() {
         if (::touchpadViewModel.isInitialized && touchpadViewModel.connState.value == ConnState.CONNECTED) {
             when (keyCode) {
                 KeyEvent.KEYCODE_VOLUME_UP -> {
-                    touchpadViewModel.sendKeypress("VOLUME_UP")
+                    touchpadViewModel.sendKeypress(SystemKey.VOLUME_UP)
                     return true
                 }
                 KeyEvent.KEYCODE_VOLUME_DOWN -> {
-                    touchpadViewModel.sendKeypress("VOLUME_DOWN")
+                    touchpadViewModel.sendKeypress(SystemKey.VOLUME_DOWN)
                     return true
                 }
             }
@@ -213,8 +214,7 @@ fun AppRoot(viewModel: TouchpadViewModel) {
         if (isKeyboardActive) {
             viewModel.setKeyboardActive(false)
         } else {
-            // 💡 之前修正過的分流版本，統一透過 ViewModel 轉發
-            viewModel.sendKeypress("BROWSER_BACK")
+            viewModel.sendKeypress(SystemKey.BROWSER_BACK)
         }
     }
 

@@ -30,6 +30,8 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 import org.json.JSONArray
+import com.example.vrtouchpad.engine.SystemKey
+
 
 enum class ConnectionMode { WIFI, BLUETOOTH }
 
@@ -585,7 +587,7 @@ class TouchpadViewModel(
         activeClient.sendText(text)
     }
 
-    fun sendKeypress(key: String) {
+    fun sendKeypress(key: SystemKey) {
         activeClient.sendKeypress(key)
     }
 

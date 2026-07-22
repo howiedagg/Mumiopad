@@ -3,6 +3,7 @@
 package com.example.vrtouchpad.network
 
 import android.util.Log
+import com.example.vrtouchpad.engine.SystemKey
 import com.example.vrtouchpad.engine.TouchOutEvent
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -181,19 +182,17 @@ class WebSocketClient(
             is TouchOutEvent.Move ->
                 """{"type":"move","dx":${event.dx},"dy":${event.dy}}"""
             is TouchOutEvent.Click ->
-                """{"type":"click","button":"${event.button}","action":"${event.action}"}"""
+                """{"type":"click","button":"${event.button.name.lowercase()}","action":"${event.action.name.lowercase()}"}"""
             is TouchOutEvent.Scroll -> {
-                // 💡 修正方向：由於 PC 端的 Python 伺服器內部會先對 dy 取負值 (-dy / 55.0)，
-                // 為了與藍牙端方向保持 100% 一致，我們在此處必須乘以 -55f 來抵消 PC 端內部的負號。
-                val finalDy = -55f * event.dy
+                val finalDy = 55f * event.dy
                 """{"type":"scroll","dy":$finalDy}"""
             }
             is TouchOutEvent.Zoom ->
                 """{"type":"zoom","delta":${event.delta}}"""
             is TouchOutEvent.Gesture ->
-                """{"type":"gesture","name":"${event.name}","direction":"${event.direction}"}"""
+                """{"type":"gesture","name":"${event.name.name.lowercase()}","direction":"${event.direction.name.lowercase()}"}"""
             is TouchOutEvent.Keypress ->
-                """{"type":"keypress","key":"${event.key}"}"""
+                """{"type":"keypress","key":"${event.key.name}"}"""
         }
 
         val activeWs = ws
@@ -213,8 +212,8 @@ class WebSocketClient(
         send(JSONObject().put("type", "text").put("value", value))
     }
 
-    override fun sendKeypress(key: String) {
-        send(JSONObject().put("type", "keypress").put("key", key))
+    override fun sendKeypress(key: SystemKey) {
+        send(JSONObject().put("type", "keypress").put("key", key.name))
     }
 
     fun sendUnpairRequest() {

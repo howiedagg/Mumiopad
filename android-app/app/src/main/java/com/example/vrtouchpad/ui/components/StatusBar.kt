@@ -4,16 +4,13 @@ package com.example.vrtouchpad.ui.components
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding // 💡 引入 statusBarsPadding
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.Keyboard
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -21,9 +18,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.example.vrtouchpad.R
 import com.example.vrtouchpad.network.ConnState
 
@@ -39,7 +36,7 @@ fun StatusBar(
     Row(
         Modifier
             .fillMaxWidth()
-            .statusBarsPadding() // 💡 關鍵修正：當背景融入最上方時，此按鈕欄會自動向下保留與實體瀏海、狀態列等高的安全距離
+            .statusBarsPadding()
             .padding(horizontal = 16.dp, vertical = 8.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
@@ -81,32 +78,37 @@ fun StatusBar(
                 color = Color.White
             )
 
-            Spacer(Modifier.width(4.dp))
+            Spacer(Modifier.width(2.dp))
 
-            Text(
-                text = "▾",
-                style = MaterialTheme.typography.bodySmall,
-                color = Color.Gray
+            // 💡 替換為官方內建圖示 ArrowDropDown
+            Icon(
+                imageVector = Icons.Default.ArrowDropDown,
+                contentDescription = null,
+                tint = Color.Gray,
+                modifier = Modifier.size(18.dp)
             )
         }
 
         Row(verticalAlignment = Alignment.CenterVertically) {
             if (connState == ConnState.CONNECTED) {
-                IconGlyphButton(
-                    glyph = "⌨",
+                IconButton(
+                    icon = Icons.Default.Keyboard,
                     highlighted = isKeyboardOpen,
                     onClick = onToggleKeyboard,
                 )
                 Spacer(Modifier.width(4.dp))
             }
-            IconGlyphButton(glyph = "⚙", onClick = onSettingsClick)
+            IconButton(
+                icon = Icons.Default.Settings,
+                onClick = onSettingsClick
+            )
         }
     }
 }
 
 @Composable
-private fun IconGlyphButton(
-    glyph: String,
+private fun IconButton(
+    icon: ImageVector,
     highlighted: Boolean = false,
     onClick: () -> Unit,
 ) {
@@ -118,6 +120,11 @@ private fun IconGlyphButton(
             .clickable { onClick() },
         contentAlignment = Alignment.Center,
     ) {
-        Text(text = glyph, fontSize = 18.sp, color = Color.White)
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = Color.White,
+            modifier = Modifier.size(20.dp)
+        )
     }
 }
