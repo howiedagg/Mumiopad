@@ -10,7 +10,6 @@ import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.sqrt
 
-// 💡 強型別 Enum 定義，杜絕字串硬編碼
 enum class MouseButton { LEFT, RIGHT, MIDDLE }
 enum class ClickAction { DOWN, UP, CLICK }
 enum class SystemKey { BROWSER_BACK, BROWSER_FORWARD, VOLUME_UP, VOLUME_DOWN, BACKSPACE, ENTER, LEFT, RIGHT }
@@ -33,49 +32,54 @@ enum class LocalFeedbackType {
     ZOOM_TICK
 }
 
+data class GestureConfig(
+    val longPressMs: Long = 350L,              // 長按觸發拖曳時間
+    val multiTapWindowMs: Long = 120L,         // 多指點擊時間視窗
+    val tapTimeoutMs: Long = 280L,             // 點擊判定超時
+    val emitIntervalMs: Long = 10L,            // 事件發送間隔
+    val movingRelayTimeoutMs: Long = 100L,     // 滑動中抬手的接力視窗 (800ms)
+    val stationaryRelayTimeoutMs: Long = 0L,   // 靜止按著抬手的快釋放視窗 (0ms 瞬間釋放)
+    val stationaryThresholdMs: Long = 150L     // 靜止防抖時間門檻 (150ms)
+)
+
 class GestureEngine(
     private val scope: CoroutineScope,
     private val density: Float,
-    private val longPressMs: Long = 350, // 全局統一長按鎖定時間：350ms
+    private val config: GestureConfig = GestureConfig(),
     private val emit: (TouchOutEvent) -> Unit,
     private val onLocalFeedback: (LocalFeedbackType) -> Unit = {},
     private val onToggleKeyboard: () -> Unit = {},
     private val isKeyboardActive: () -> Boolean = { false },
     private val getScrollSpeed: () -> Float = { 1f }
 ) {
-    private val slopPx = 8f * density                       // 8dp (全局點擊死區門檻)
-    private val stillPx = 10f * density                     // 10dp (全局長按靜止防抖區)
+    private val slopPx = 8f * density                      // 8dp (點擊死區門檻)
+    private val stillPx = 10f * density                    // 10dp (靜止防抖區門檻)
     private val dragStartSlopPx = 1.5f * density
-    private val swipeActivationSlopPx = 18f * density      // 18dp (影片快進門檻)
-    private val scrollActivationSlopPx = 32f * density     // 32dp (網頁滾動門檻)
+    private val swipeActivationSlopPx = 18f * density
+    private val scrollActivationSlopPx = 32f * density
     private val zoomActivationSlopPx = 25f * density
     private val zoomHapticDistancePx = 30f * density
     private val swipeThresholdPx = 48f * density
-
-    private val emitIntervalMs = 10L
-    private val multiTapWindowMs = 120L
-    private val tapTimeoutMs = 280L
-
-    private val scrollDampeningLimitPx = 35f * density
     private val hapticNotchDistancePx = 24f * density
-    private var rawHapticAccumulator = 0f
 
+    private var rawHapticAccumulator = 0f
     private var scrollStepAccumulator = 0f
     private var lastHapticTwoFingerDist = 0f
 
-    // 雙指接力（Hand-off）緩衝變數
     private var handOffJob: Job? = null
-    private var isHandOffPending = false
-    private var handOffPrimaryId: Long? = null
-    private var handOffSecondaryId: Long? = null
+    private var activePointerId: Long? = null
 
-    // 雙指長按右鍵拖曳計時器
+    // 防抖靜止判定變數
+    private var lastSignificantMoveTime: Long = 0L         // 最後一次超過 10dp 位移的時間
+    private var dragStillAnchorX: Float = 0f                // 靜止防抖基準點 X
+    private var dragStillAnchorY: Float = 0f                // 靜止防抖基準點 Y
+
     private var twoFingerLongPressJob: Job? = null
+    private var longPressJob: Job? = null
 
     private enum class Mode {
         IDLE, MOVE, PREDRAG_WAIT, DRAG, TWO_FINGER_WAIT,
-        RIGHT_DRAG, // 雙指長按右鍵拖曳模式
-        SCROLL_VERTICAL, SWIPE_HORIZONTAL, ZOOM, THREE_FINGER, FOUR_FINGER
+        RIGHT_DRAG, SCROLL_VERTICAL, SWIPE_HORIZONTAL, ZOOM, THREE_FINGER, FOUR_FINGER
     }
 
     private data class Pointer(
@@ -88,7 +92,6 @@ class GestureEngine(
     private val pointers = LinkedHashMap<Long, Pointer>()
     private var mode = Mode.IDLE
 
-    private var longPressJob: Job? = null
     private var firstFingerId: Long? = null
     private var lastScrollY = 0f
     private var rightClickCandidate = false
@@ -129,7 +132,6 @@ class GestureEngine(
             repeat(absSteps) {
                 onLocalFeedback(LocalFeedbackType.TICK)
             }
-
             emit(TouchOutEvent.Scroll(steps.toFloat()))
             scrollStepAccumulator -= steps * hapticThreshold
         }
@@ -149,7 +151,7 @@ class GestureEngine(
 
         twoFingerDownTime = System.currentTimeMillis()
         val timeSinceFirst = twoFingerDownTime - firstFingerDownTime
-        rightClickCandidate = timeSinceFirst <= multiTapWindowMs
+        rightClickCandidate = timeSinceFirst <= config.multiTapWindowMs
 
         mode = Mode.TWO_FINGER_WAIT
         transitionedFromMultiTouch = true
@@ -172,32 +174,33 @@ class GestureEngine(
         rawHapticAccumulator = 0f
         lastEmitTime = System.currentTimeMillis()
 
-        // 啟動二指長按計時器（350ms 鎖定右鍵拖曳）
         startTwoFingerLongPressWatcher()
     }
 
     private fun startTwoFingerLongPressWatcher() {
         twoFingerLongPressJob?.cancel()
         twoFingerLongPressJob = scope.launch {
-            delay(longPressMs) // 350ms
+            delay(config.longPressMs)
             if (mode == Mode.TWO_FINGER_WAIT && pointers.size == 2) {
                 val p1 = pointers.values.elementAtOrNull(0)
                 val p2 = pointers.values.elementAtOrNull(1)
                 if (p1 != null && p2 != null && dist(p1) < stillPx && dist(p2) < stillPx) {
                     rightClickCandidate = false
-
-                    // 💡 關鍵修復：改為 Mode.DRAG (左鍵拖曳)，並發送 MouseButton.LEFT！
                     mode = Mode.DRAG
                     dragging = true
 
                     val secondFingerId = pointers.keys.elementAtOrNull(1) ?: pointers.keys.last()
                     firstFingerId = secondFingerId
+                    activePointerId = secondFingerId
 
                     val activePointer = pointers[secondFingerId]
                     if (activePointer != null) {
                         activePointer.startX = activePointer.x
                         activePointer.startY = activePointer.y
+                        dragStillAnchorX = activePointer.x
+                        dragStillAnchorY = activePointer.y
                     }
+                    lastSignificantMoveTime = System.currentTimeMillis()
 
                     emit(TouchOutEvent.Click(MouseButton.LEFT, ClickAction.DOWN))
                     onLocalFeedback(LocalFeedbackType.PRESS_LOCK)
@@ -208,57 +211,52 @@ class GestureEngine(
 
     fun onDown(id: Long, x: Float, y: Float) {
         pointers[id] = Pointer(x, y, x, y)
+        val now = System.currentTimeMillis()
+
+        handOffJob?.cancel()
 
         when (pointers.size) {
             1 -> {
                 firstFingerId = id
+                activePointerId = id
                 mode = Mode.MOVE
-                firstFingerDownTime = System.currentTimeMillis()
+                firstFingerDownTime = now
 
                 startLongPressWatcher(id)
                 transitionedFromMultiTouch = false
 
                 accumulatedDx = 0f
                 accumulatedDy = 0f
-                lastEmitTime = System.currentTimeMillis()
+                lastEmitTime = now
             }
             2 -> {
                 longPressJob?.cancel()
-                twoFingerDownTime = System.currentTimeMillis()
+                twoFingerDownTime = now
 
-                val p1 = pointers[firstFingerId]
-                val isFirstFingerMoving = p1 != null && dist(p1) >= slopPx
-
-                // 💡 拖曳中或第一指滑動中 ➔ 啟動交疊接力觀望
-                if (dragging || isFirstFingerMoving) {
-                    isHandOffPending = true
-                    handOffPrimaryId = firstFingerId
-                    handOffSecondaryId = id
-
-                    pointers.values.forEach {
-                        it.startX = it.x
-                        it.startY = it.y
+                // 💡 關鍵修復：只有在真正的左鍵拖曳 (dragging == true) 狀態下，雙指按下才接管「拖曳接力」
+                if (dragging) {
+                    activePointerId = id
+                    val activeP = pointers[id]
+                    if (activeP != null) {
+                        activeP.startX = activeP.x
+                        activeP.startY = activeP.y
+                        dragStillAnchorX = activeP.x
+                        dragStillAnchorY = activeP.y
                     }
-
-                    // 拖曳給予 800ms 交疊容錯，普通滑動給予 180ms
-                    val currentTimeout = if (dragging) 800L else 180L
-
-                    handOffJob = scope.launch {
-                        delay(currentTimeout)
-                        if (isHandOffPending) {
-                            isHandOffPending = false
-                            executeTwoFingerWaitSetup()
-                        }
-                    }
+                    accumulatedDx = 0f
+                    accumulatedDy = 0f
+                    accumulatedDragDx = 0f
+                    accumulatedDragDy = 0f
+                    lastEmitTime = now
+                    lastSignificantMoveTime = now
                 } else {
+                    // 💡 普通狀態下雙指按下，一律正常進入 TWO_FINGER_WAIT，釋放所有雙指手勢！
                     executeTwoFingerWaitSetup()
                 }
             }
             3 -> {
                 longPressJob?.cancel()
                 twoFingerLongPressJob?.cancel()
-                handOffJob?.cancel()
-                isHandOffPending = false
 
                 mode = Mode.THREE_FINGER
                 transitionedFromMultiTouch = true
@@ -280,8 +278,6 @@ class GestureEngine(
             4 -> {
                 longPressJob?.cancel()
                 twoFingerLongPressJob?.cancel()
-                handOffJob?.cancel()
-                isHandOffPending = false
 
                 mode = Mode.FOUR_FINGER
                 transitionedFromMultiTouch = true
@@ -302,42 +298,14 @@ class GestureEngine(
 
         val now = System.currentTimeMillis()
 
-        if (isHandOffPending) {
-            val p2 = pointers[handOffSecondaryId]
-            if (p2 != null) {
-                val dist2 = sqrt((p2.x - p2.startX) * (p2.x - p2.startX) + (p2.y - p2.startY) * (p2.y - p2.startY))
-
-                if (dist2 >= slopPx * 1.2f) {
-                    handOffJob?.cancel()
-                    isHandOffPending = false
-                    executeTwoFingerWaitSetup()
-                    return
-                }
-            }
-
-            if (id == handOffPrimaryId) {
-                accumulatedDx += dx
-                accumulatedDy += dy
-                if (now - lastEmitTime >= emitIntervalMs) {
-                    if (accumulatedDx != 0f || accumulatedDy != 0f) {
-                        emit(TouchOutEvent.Move(accumulatedDx, accumulatedDy))
-                        accumulatedDx = 0f
-                        accumulatedDy = 0f
-                    }
-                    lastEmitTime = now
-                }
-            }
-            return
-        }
-
         when (mode) {
-            Mode.MOVE -> if (id == firstFingerId) {
+            Mode.MOVE -> if (id == activePointerId || id == firstFingerId) {
                 if (dist(p) >= slopPx) longPressJob?.cancel()
 
                 accumulatedDx += dx
                 accumulatedDy += dy
 
-                if (now - lastEmitTime >= emitIntervalMs) {
+                if (now - lastEmitTime >= config.emitIntervalMs) {
                     if (accumulatedDx != 0f || accumulatedDy != 0f) {
                         emit(TouchOutEvent.Move(accumulatedDx, accumulatedDy))
                         accumulatedDx = 0f
@@ -350,6 +318,11 @@ class GestureEngine(
             Mode.PREDRAG_WAIT -> if (id == firstFingerId && dist(p) >= dragStartSlopPx) {
                 dragging = true
                 mode = Mode.DRAG
+                activePointerId = id
+                dragStillAnchorX = p.x
+                dragStillAnchorY = p.y
+                lastSignificantMoveTime = now
+
                 emit(TouchOutEvent.Click(MouseButton.LEFT, ClickAction.DOWN))
 
                 accumulatedDragDx = p.x - p.startX
@@ -362,11 +335,22 @@ class GestureEngine(
                 lastEmitTime = now
             }
 
-            Mode.DRAG -> if (id == firstFingerId) {
+            Mode.DRAG -> if (id == activePointerId || (activePointerId == null && id == firstFingerId)) {
+                val distFromAnchor = sqrt(
+                    (p.x - dragStillAnchorX) * (p.x - dragStillAnchorX) +
+                            (p.y - dragStillAnchorY) * (p.y - dragStillAnchorY)
+                )
+
+                if (distFromAnchor >= stillPx) {
+                    lastSignificantMoveTime = now
+                    dragStillAnchorX = p.x
+                    dragStillAnchorY = p.y
+                }
+
                 accumulatedDragDx += dx
                 accumulatedDragDy += dy
 
-                if (now - lastEmitTime >= emitIntervalMs) {
+                if (now - lastEmitTime >= config.emitIntervalMs) {
                     if (accumulatedDragDx != 0f || accumulatedDragDy != 0f) {
                         emit(TouchOutEvent.Move(accumulatedDragDx, accumulatedDragDy))
                         accumulatedDragDx = 0f
@@ -436,7 +420,7 @@ class GestureEngine(
                     accumulatedDragDx += dx
                     accumulatedDragDy += dy
 
-                    if (now - lastEmitTime >= emitIntervalMs) {
+                    if (now - lastEmitTime >= config.emitIntervalMs) {
                         if (accumulatedDragDx != 0f || accumulatedDragDy != 0f) {
                             emit(TouchOutEvent.Move(accumulatedDragDx, accumulatedDragDy))
                             accumulatedDragDx = 0f
@@ -481,7 +465,7 @@ class GestureEngine(
                         lastHapticTwoFingerDist += sign * ticksCount * zoomHapticDistancePx
                     }
 
-                    if (now - lastEmitTime >= emitIntervalMs) {
+                    if (now - lastEmitTime >= config.emitIntervalMs) {
                         if (accumulatedZoomSteps != 0) {
                             emit(TouchOutEvent.Zoom(accumulatedZoomSteps.toFloat()))
                             accumulatedZoomSteps = 0
@@ -546,59 +530,35 @@ class GestureEngine(
 
     fun onUp(id: Long) {
         val p = pointers[id] ?: return
-
-        if (isHandOffPending) {
-            handOffJob?.cancel()
-            isHandOffPending = false
-
-            if (id == handOffPrimaryId) {
-                pointers.remove(id)
-                val newPrimaryId = handOffSecondaryId ?: pointers.keys.firstOrNull()
-                if (newPrimaryId != null) {
-                    firstFingerId = newPrimaryId
-                    val newPointer = pointers[newPrimaryId]
-                    if (newPointer != null) {
-                        newPointer.startX = newPointer.x
-                        newPointer.startY = newPointer.y
-                    }
-
-                    mode = if (dragging) Mode.DRAG else Mode.MOVE
-                    transitionedFromMultiTouch = true
-                    lastEmitTime = System.currentTimeMillis()
-                } else {
-                    mode = Mode.IDLE
-                }
-                return
-            } else if (id == handOffSecondaryId) {
-                val p2 = pointers[id]
-                val movedDist = if (p2 != null) dist(p2) else 0f
-                val tapDuration = System.currentTimeMillis() - twoFingerDownTime
-
-                if (tapDuration <= tapTimeoutMs && movedDist < slopPx && !dragging) {
-                    emit(TouchOutEvent.Click(MouseButton.LEFT, ClickAction.CLICK))
-                    onLocalFeedback(LocalFeedbackType.TICK)
-                }
-
-                pointers.remove(id)
-                mode = if (dragging) Mode.DRAG else Mode.MOVE
-                return
-            }
-        }
-
+        val now = System.currentTimeMillis()
         val oldMode = mode
 
+        pointers.remove(id)
+
         when (oldMode) {
-            Mode.MOVE -> if (id == firstFingerId) {
+            Mode.MOVE -> if (id == firstFingerId || id == activePointerId) {
                 longPressJob?.cancel()
                 if (accumulatedDx != 0f || accumulatedDy != 0f) {
                     emit(TouchOutEvent.Move(accumulatedDx, accumulatedDy))
                     accumulatedDx = 0f
                     accumulatedDy = 0f
                 }
-                if (dist(p) < slopPx && !transitionedFromMultiTouch) {
-                    emit(TouchOutEvent.Click(MouseButton.LEFT, ClickAction.CLICK))
+
+                val remainingId = pointers.keys.firstOrNull()
+                if (remainingId != null) {
+                    activePointerId = remainingId
+                    firstFingerId = remainingId
+                    pointers[remainingId]?.let {
+                        it.startX = it.x
+                        it.startY = it.y
+                    }
+                } else {
+                    if (dist(p) < slopPx && !transitionedFromMultiTouch) {
+                        emit(TouchOutEvent.Click(MouseButton.LEFT, ClickAction.CLICK))
+                    }
+                    mode = Mode.IDLE
+                    activePointerId = null
                 }
-                mode = Mode.IDLE
             }
 
             Mode.PREDRAG_WAIT -> if (id == firstFingerId) {
@@ -607,26 +567,57 @@ class GestureEngine(
                 onLocalFeedback(LocalFeedbackType.RELEASE_LOCK)
             }
 
-            Mode.DRAG -> if (id == firstFingerId) {
+            Mode.DRAG -> {
                 if (accumulatedDragDx != 0f || accumulatedDragDy != 0f) {
                     emit(TouchOutEvent.Move(accumulatedDragDx, accumulatedDragDy))
                     accumulatedDragDx = 0f
                     accumulatedDragDy = 0f
                 }
-                // 💡 關鍵：手指離開螢幕，0ms 秒發 Left Up！放開視窗乾脆俐落！
-                emit(TouchOutEvent.Click(MouseButton.LEFT, ClickAction.UP))
-                dragging = false
-                mode = Mode.IDLE
-                onLocalFeedback(LocalFeedbackType.RELEASE_LOCK)
+
+                val remainingId = pointers.keys.firstOrNull()
+                if (remainingId != null) {
+                    activePointerId = remainingId
+                    firstFingerId = remainingId
+                    pointers[remainingId]?.let {
+                        it.startX = it.x
+                        it.startY = it.y
+                        dragStillAnchorX = it.x
+                        dragStillAnchorY = it.y
+                    }
+                    lastSignificantMoveTime = now
+                } else {
+                    val idleDuration = now - lastSignificantMoveTime
+                    val isStationary = idleDuration >= config.stationaryThresholdMs
+
+                    val relayTimeout = if (!isStationary) {
+                        config.movingRelayTimeoutMs     // 滑動中抬手：800ms
+                    } else {
+                        config.stationaryRelayTimeoutMs // 靜止抬手：0ms 瞬間釋放
+                    }
+
+                    handOffJob?.cancel()
+                    handOffJob = scope.launch {
+                        if (relayTimeout > 0) {
+                            delay(relayTimeout)
+                        }
+                        if (pointers.isEmpty()) {
+                            emit(TouchOutEvent.Click(MouseButton.LEFT, ClickAction.UP))
+                            dragging = false
+                            mode = Mode.IDLE
+                            activePointerId = null
+                            onLocalFeedback(LocalFeedbackType.RELEASE_LOCK)
+                        }
+                    }
+                }
             }
 
             Mode.TWO_FINGER_WAIT -> {
                 twoFingerLongPressJob?.cancel()
-                val tapDuration = System.currentTimeMillis() - twoFingerDownTime
+                val tapDuration = now - twoFingerDownTime
                 val p2 = pointers[id]
                 val movedDist = if (p2 != null) dist(p2) else 0f
 
-                if (tapDuration <= tapTimeoutMs && movedDist < slopPx) {
+                if (tapDuration <= config.tapTimeoutMs && movedDist < slopPx) {
                     if (rightClickCandidate) {
                         emit(TouchOutEvent.Click(MouseButton.RIGHT, ClickAction.CLICK))
                     } else if (id != firstFingerId) {
@@ -636,10 +627,7 @@ class GestureEngine(
             }
 
             Mode.RIGHT_DRAG -> {
-                if (id != firstFingerId) {
-                    pointers.remove(id)
-                    return
-                } else {
+                if (id == firstFingerId) {
                     if (accumulatedDragDx != 0f || accumulatedDragDy != 0f) {
                         emit(TouchOutEvent.Move(accumulatedDragDx, accumulatedDragDy))
                         accumulatedDragDx = 0f
@@ -683,20 +671,21 @@ class GestureEngine(
             Mode.IDLE -> Unit
         }
 
-        pointers.remove(id)
-
-        if (pointers.isEmpty()) {
+        // 💡 確保剩餘 1 隻手指時能流暢繼承主控權
+        if (pointers.isEmpty() && mode != Mode.DRAG) {
             mode = Mode.IDLE
             firstFingerId = null
+            activePointerId = null
             dragging = false
             transitionedFromMultiTouch = false
             horizontalSwipeTriggered = false
             threeFingerSwiped = false
-        } else if (pointers.size == 1) {
+        } else if (pointers.size == 1 && mode != Mode.DRAG) {
             val remainingId = pointers.keys.first()
             val remainingPointer = pointers[remainingId]
             if (remainingPointer != null) {
                 firstFingerId = remainingId
+                activePointerId = remainingId
                 remainingPointer.startX = remainingPointer.x
                 remainingPointer.startY = remainingPointer.y
 
@@ -717,9 +706,10 @@ class GestureEngine(
         catchupSmoother.cancel()
         pointers.clear()
 
-        isHandOffPending = false
-        handOffPrimaryId = null
-        handOffSecondaryId = null
+        activePointerId = null
+        lastSignificantMoveTime = 0L
+        dragStillAnchorX = 0f
+        dragStillAnchorY = 0f
 
         mode = Mode.IDLE
         dragging = false
@@ -743,7 +733,7 @@ class GestureEngine(
 
     private fun startLongPressWatcher(id: Long) {
         longPressJob = scope.launch {
-            delay(longPressMs)
+            delay(config.longPressMs)
             val p = pointers[id] ?: return@launch
             if (pointers.size == 1 && dist(p) < stillPx) {
                 mode = Mode.PREDRAG_WAIT
