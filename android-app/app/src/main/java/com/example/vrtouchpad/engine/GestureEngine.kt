@@ -34,7 +34,7 @@ enum class LocalFeedbackType {
 }
 
 data class GestureConfig(
-    val longPressMs: Long = 350L,              // 長按觸發拖曳時間
+    val longPressMs: Long = 300L,              // 長按觸發拖曳時間
     val multiTapWindowMs: Long = 120L,         // 多指點擊時間視窗
     val tapTimeoutMs: Long = 280L,             // 點擊判定超時
     val emitIntervalMs: Long = 10L,            // 事件發送間隔
