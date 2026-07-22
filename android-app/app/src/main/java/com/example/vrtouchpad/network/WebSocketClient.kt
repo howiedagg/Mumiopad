@@ -184,7 +184,7 @@ class WebSocketClient(
             is TouchOutEvent.Click ->
                 """{"type":"click","button":"${event.button.name.lowercase()}","action":"${event.action.name.lowercase()}"}"""
             is TouchOutEvent.Scroll -> {
-                val finalDy = 55f * event.dy
+                val finalDy = -55f * event.dy
                 """{"type":"scroll","dy":$finalDy}"""
             }
             is TouchOutEvent.Zoom ->
