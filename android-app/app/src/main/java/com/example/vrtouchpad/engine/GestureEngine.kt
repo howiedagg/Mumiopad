@@ -37,7 +37,7 @@ data class GestureConfig(
     val multiTapWindowMs: Long = 120L,         // 多指點擊時間視窗
     val tapTimeoutMs: Long = 280L,             // 點擊判定超時
     val emitIntervalMs: Long = 10L,            // 事件發送間隔
-    val movingRelayTimeoutMs: Long = 100L,     // 滑動中抬手的接力視窗 (800ms)
+    val movingRelayTimeoutMs: Long = 100L,     // 滑動中抬手的接力視窗 (100ms)
     val stationaryRelayTimeoutMs: Long = 0L,   // 靜止按著抬手的快釋放視窗 (0ms 瞬間釋放)
     val stationaryThresholdMs: Long = 150L     // 靜止防抖時間門檻 (150ms)
 )
@@ -137,6 +137,35 @@ class GestureEngine(
         }
     }
 
+    // 💡 萃取私有函數 1：初始化雙指滾動基準點
+    private fun initTwoFingerScroll() {
+        pointers.values.forEach {
+            it.startX = it.x
+            it.startY = it.y
+        }
+        val p1 = pointers.values.elementAtOrNull(0)
+        val p2 = pointers.values.elementAtOrNull(1)
+        if (p1 != null && p2 != null) {
+            lastScrollY = (p1.y + p2.y) / 2f
+        }
+        scrollStepAccumulator = 0f
+    }
+
+    // 💡 萃取私有函數 2：處理雙指滾動（計算平均 Y 軸並觸發事件，普通滾動與拖曳滾動共享）
+    private fun processTwoFingerScroll() {
+        val p1 = pointers.values.elementAtOrNull(0)
+        val p2 = pointers.values.elementAtOrNull(1)
+        if (p1 != null && p2 != null) {
+            val currentAvgY = (p1.y + p2.y) / 2f
+            val rawDeltaY = currentAvgY - lastScrollY
+
+            scrollStepAccumulator += rawDeltaY * getScrollSpeed()
+            triggerStepsFromAccumulator()
+
+            lastScrollY = currentAvgY
+        }
+    }
+
     private fun executeTwoFingerWaitSetup() {
         if (dragging) {
             if (accumulatedDragDx != 0f || accumulatedDragDy != 0f) {
@@ -156,10 +185,11 @@ class GestureEngine(
         mode = Mode.TWO_FINGER_WAIT
         transitionedFromMultiTouch = true
 
-        pointers.values.forEach {
-            it.startX = it.x
-            it.startY = it.y
-        }
+        initTwoFingerScroll()
+
+        accumulatedZoomSteps = 0
+        rawHapticAccumulator = 0f
+        lastEmitTime = System.currentTimeMillis()
 
         val p1 = pointers.values.elementAtOrNull(0)
         val p2 = pointers.values.elementAtOrNull(1)
@@ -168,11 +198,6 @@ class GestureEngine(
             lastTwoFingerDist = startTwoFingerDist
             lastHapticTwoFingerDist = startTwoFingerDist
         }
-
-        scrollStepAccumulator = 0f
-        accumulatedZoomSteps = 0
-        rawHapticAccumulator = 0f
-        lastEmitTime = System.currentTimeMillis()
 
         startTwoFingerLongPressWatcher()
     }
@@ -223,8 +248,7 @@ class GestureEngine(
                 transitionedFromMultiTouch = false
 
                 if (dragging) {
-                    // 💡 關鍵修復：如果目前處於「拖曳接力/延續拖曳」狀態，必須維持 Mode.DRAG！
-                    // 絕不切換回 Mode.MOVE，防止遺失左鍵釋放事件 (LEFT UP) 或誤觸輕點 (CLICK)
+                    // 💡 修復 1：延續拖曳接力時保持 Mode.DRAG，避免被蓋成 Mode.MOVE 導致左鍵卡住與誤發 Click
                     mode = Mode.DRAG
                     val p = pointers[id]
                     if (p != null) {
@@ -240,7 +264,6 @@ class GestureEngine(
                     accumulatedDragDy = 0f
                     lastEmitTime = now
                 } else {
-                    // 普通狀態：進入一般移動，並啟動長按判定
                     mode = Mode.MOVE
                     startLongPressWatcher(id)
                     accumulatedDx = 0f
@@ -252,16 +275,10 @@ class GestureEngine(
                 longPressJob?.cancel()
                 twoFingerDownTime = now
 
-                // 💡 關鍵修復：只有在真正的左鍵拖曳 (dragging == true) 狀態下，雙指按下才接管「拖曳接力」
                 if (dragging) {
+                    // 💡 修復 2：拖曳中按下第二隻手指，初始化雙指滾動基準點
                     activePointerId = id
-                    val activeP = pointers[id]
-                    if (activeP != null) {
-                        activeP.startX = activeP.x
-                        activeP.startY = activeP.y
-                        dragStillAnchorX = activeP.x
-                        dragStillAnchorY = activeP.y
-                    }
+                    initTwoFingerScroll()
                     accumulatedDx = 0f
                     accumulatedDy = 0f
                     accumulatedDragDx = 0f
@@ -269,7 +286,6 @@ class GestureEngine(
                     lastEmitTime = now
                     lastSignificantMoveTime = now
                 } else {
-                    // 💡 普通狀態下雙指按下，一律正常進入 TWO_FINGER_WAIT，釋放所有雙指手勢！
                     executeTwoFingerWaitSetup()
                 }
             }
@@ -354,28 +370,34 @@ class GestureEngine(
                 lastEmitTime = now
             }
 
-            Mode.DRAG -> if (id == activePointerId || (activePointerId == null && id == firstFingerId)) {
-                val distFromAnchor = sqrt(
-                    (p.x - dragStillAnchorX) * (p.x - dragStillAnchorX) +
-                            (p.y - dragStillAnchorY) * (p.y - dragStillAnchorY)
-                )
+            Mode.DRAG -> {
+                if (pointers.size >= 2) {
+                    // 💡 修復 3：雙指處於拖曳狀態時，複用 processTwoFingerScroll 進行滾動
+                    processTwoFingerScroll()
+                } else if (id == activePointerId || (activePointerId == null && id == firstFingerId)) {
+                    // 單指拖曳移動游標
+                    val distFromAnchor = sqrt(
+                        (p.x - dragStillAnchorX) * (p.x - dragStillAnchorX) +
+                                (p.y - dragStillAnchorY) * (p.y - dragStillAnchorY)
+                    )
 
-                if (distFromAnchor >= stillPx) {
-                    lastSignificantMoveTime = now
-                    dragStillAnchorX = p.x
-                    dragStillAnchorY = p.y
-                }
-
-                accumulatedDragDx += dx
-                accumulatedDragDy += dy
-
-                if (now - lastEmitTime >= config.emitIntervalMs) {
-                    if (accumulatedDragDx != 0f || accumulatedDragDy != 0f) {
-                        emit(TouchOutEvent.Move(accumulatedDragDx, accumulatedDragDy))
-                        accumulatedDragDx = 0f
-                        accumulatedDragDy = 0f
+                    if (distFromAnchor >= stillPx) {
+                        lastSignificantMoveTime = now
+                        dragStillAnchorX = p.x
+                        dragStillAnchorY = p.y
                     }
-                    lastEmitTime = now
+
+                    accumulatedDragDx += dx
+                    accumulatedDragDy += dy
+
+                    if (now - lastEmitTime >= config.emitIntervalMs) {
+                        if (accumulatedDragDx != 0f || accumulatedDragDy != 0f) {
+                            emit(TouchOutEvent.Move(accumulatedDragDx, accumulatedDragDy))
+                            accumulatedDragDx = 0f
+                            accumulatedDragDy = 0f
+                        }
+                        lastEmitTime = now
+                    }
                 }
             }
 
@@ -451,17 +473,7 @@ class GestureEngine(
             }
 
             Mode.SCROLL_VERTICAL -> {
-                val p1 = pointers.values.elementAtOrNull(0)
-                val p2 = pointers.values.elementAtOrNull(1)
-                if (p1 != null && p2 != null) {
-                    val currentAvgY = (p1.y + p2.y) / 2
-                    val rawDeltaY = currentAvgY - lastScrollY
-
-                    scrollStepAccumulator += rawDeltaY * getScrollSpeed()
-                    triggerStepsFromAccumulator()
-
-                    lastScrollY = currentAvgY
-                }
+                processTwoFingerScroll()
             }
 
             Mode.ZOOM -> {
@@ -609,7 +621,7 @@ class GestureEngine(
                     val isStationary = idleDuration >= config.stationaryThresholdMs
 
                     val relayTimeout = if (!isStationary) {
-                        config.movingRelayTimeoutMs     // 滑動中抬手：800ms
+                        config.movingRelayTimeoutMs     // 滑動中抬手：100ms
                     } else {
                         config.stationaryRelayTimeoutMs // 靜止抬手：0ms 瞬間釋放
                     }
