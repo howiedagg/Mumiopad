@@ -55,6 +55,13 @@ class GestureEngine(
     private val multiTapWindowMs = 120L
     private val tapTimeoutMs = 280L
 
+    // 💡 新增：雙指接力（Hand-off）相關變數與參數
+    private val handOffTimeoutMs = 200L
+    private var handOffJob: Job? = null
+    private var isHandOffPending = false
+    private var handOffPrimaryId: Long? = null
+    private var handOffSecondaryId: Long? = null
+
     // 觸覺反饋相關參數
     private val hapticNotchDistancePx = 24f * density // 可調：越小震動越密集
 
@@ -126,6 +133,44 @@ class GestureEngine(
         }
     }
 
+    // 💡 新增：當確認不是接力，而是真正的雙指手勢時呼叫
+    private fun executeTwoFingerWaitSetup() {
+        if (dragging) {
+            if (accumulatedDragDx != 0f || accumulatedDragDy != 0f) {
+                emit(TouchOutEvent.Move(accumulatedDragDx, accumulatedDragDy))
+                accumulatedDragDx = 0f
+                accumulatedDragDy = 0f
+            }
+            emit(TouchOutEvent.Click(MouseButton.LEFT, ClickAction.UP))
+            dragging = false
+            onLocalFeedback(LocalFeedbackType.RELEASE_LOCK)
+        }
+
+        twoFingerDownTime = System.currentTimeMillis()
+        val timeSinceFirst = twoFingerDownTime - firstFingerDownTime
+        rightClickCandidate = timeSinceFirst <= multiTapWindowMs
+
+        mode = Mode.TWO_FINGER_WAIT
+        transitionedFromMultiTouch = true
+
+        pointers.values.forEach {
+            it.startX = it.x
+            it.startY = it.y
+        }
+
+        val p1 = pointers.values.elementAtOrNull(0)
+        val p2 = pointers.values.elementAtOrNull(1)
+        if (p1 != null && p2 != null) {
+            startTwoFingerDist = distBetween(p1, p2)
+            lastTwoFingerDist = startTwoFingerDist
+            lastHapticTwoFingerDist = startTwoFingerDist
+        }
+
+        scrollStepAccumulator = 0f
+        accumulatedZoomSteps = 0
+        lastEmitTime = System.currentTimeMillis()
+    }
+
     fun onDown(id: Long, x: Float, y: Float) {
         pointers[id] = Pointer(x, y, x, y)
 
@@ -145,43 +190,34 @@ class GestureEngine(
             2 -> {
                 longPressJob?.cancel()
 
-                if (dragging) {
-                    if (accumulatedDragDx != 0f || accumulatedDragDy != 0f) {
-                        emit(TouchOutEvent.Move(accumulatedDragDx, accumulatedDragDy))
-                        accumulatedDragDx = 0f
-                        accumulatedDragDy = 0f
+                // 💡 關鍵：若原本處於移動或拖曳狀態，啟動 150ms 的雙指接力觀望
+                if (mode == Mode.MOVE || mode == Mode.DRAG || dragging) {
+                    isHandOffPending = true
+                    handOffPrimaryId = firstFingerId
+                    handOffSecondaryId = id
+
+                    pointers.values.forEach {
+                        it.startX = it.x
+                        it.startY = it.y
                     }
-                    emit(TouchOutEvent.Click(MouseButton.LEFT, ClickAction.UP))
-                    dragging = false
-                    onLocalFeedback(LocalFeedbackType.RELEASE_LOCK)
+
+                    handOffJob = scope.launch {
+                        delay(handOffTimeoutMs)
+                        if (isHandOffPending) {
+                            // 150ms 過去了第一指還沒抬起，確定是雙指手勢
+                            isHandOffPending = false
+                            executeTwoFingerWaitSetup()
+                        }
+                    }
+                } else {
+                    executeTwoFingerWaitSetup()
                 }
-
-                twoFingerDownTime = System.currentTimeMillis()
-                val timeSinceFirst = twoFingerDownTime - firstFingerDownTime
-                rightClickCandidate = timeSinceFirst <= multiTapWindowMs
-
-                mode = Mode.TWO_FINGER_WAIT
-                transitionedFromMultiTouch = true
-
-                pointers.values.forEach {
-                    it.startX = it.x
-                    it.startY = it.y
-                }
-
-                val p1 = pointers.values.elementAtOrNull(0)
-                val p2 = pointers.values.elementAtOrNull(1)
-                if (p1 != null && p2 != null) {
-                    startTwoFingerDist = distBetween(p1, p2)
-                    lastTwoFingerDist = startTwoFingerDist
-                    lastHapticTwoFingerDist = startTwoFingerDist
-                }
-
-                // 💡 將累加器重置為 0，開展新的雙指滾動生命週期
-                scrollStepAccumulator = 0f
-                accumulatedZoomSteps = 0
-                lastEmitTime = System.currentTimeMillis()
             }
             3 -> {
+                // 3 指落下時取消接力觀望
+                handOffJob?.cancel()
+                isHandOffPending = false
+
                 mode = Mode.THREE_FINGER
                 transitionedFromMultiTouch = true
 
@@ -219,6 +255,45 @@ class GestureEngine(
         p.y = y
 
         val now = System.currentTimeMillis()
+
+        // 💡 關鍵修正：處於接力觀望期時
+        if (isHandOffPending) {
+            if (dragging) {
+                // 情況一：正在【拖曳視窗中】！
+                // 允許第一指繼續拉動視窗，不檢測滾動死區，直到第一指抬起（完成接力）
+                if (id == handOffPrimaryId) {
+                    accumulatedDragDx += dx
+                    accumulatedDragDy += dy
+                    if (now - lastEmitTime >= emitIntervalMs) {
+                        if (accumulatedDragDx != 0f || accumulatedDragDy != 0f) {
+                            emit(TouchOutEvent.Move(accumulatedDragDx, accumulatedDragDy))
+                            accumulatedDragDx = 0f
+                            accumulatedDragDy = 0f
+                        }
+                        lastEmitTime = now
+                    }
+                }
+                return
+            } else {
+                // 情況二：普通滑動／準備雙指滾動
+                val p1 = pointers[handOffPrimaryId]
+                val p2 = pointers[handOffSecondaryId]
+
+                if (p1 != null && p2 != null) {
+                    val dist1 = sqrt((p1.x - p1.startX) * (p1.x - p1.startX) + (p1.y - p1.startY) * (p1.y - p1.startY))
+                    val dist2 = sqrt((p2.x - p2.startX) * (p2.x - p2.startX) + (p2.y - p2.startY) * (p2.y - p2.startY))
+
+                    // 只有在非拖曳時，滑動才秒切雙指滾動模式
+                    if (dist1 >= slopPx * 1.2f || dist2 >= slopPx * 1.2f) {
+                        handOffJob?.cancel()
+                        isHandOffPending = false
+                        executeTwoFingerWaitSetup()
+                        return
+                    }
+                }
+                return
+            }
+        }
 
         when (mode) {
             Mode.MOVE -> if (id == firstFingerId) {
@@ -283,31 +358,25 @@ class GestureEngine(
                     val currentDist = distBetween(p1, p2)
                     val deltaDist = currentDist - startTwoFingerDist
 
-                    // 各自手指相較於觸碰起點的移動向量
                     val v1x = p1.x - p1.startX
                     val v1y = p1.y - p1.startY
                     val v2x = p2.x - p2.startX
                     val v2y = p2.y - p2.startY
 
-                    // 計算兩向量的內積 (Dot Product)
                     val dot = (v1x * v2x) + (v1y * v2y)
 
-                    // 同向判定。若內積大於 0 且位移大於基本死區，代表手指是在往同方向滑動（捲動/瀏覽）
                     val isMovingInSameDirection = dot > 0 &&
                             ((v1x * v1x + v1y * v1y) > slopPx * slopPx || (v2x * v2x + v2y * v2y) > slopPx * slopPx)
 
-                    // 安全鎖：計算兩隻手指是否都有移動超過基礎死區
                     val bothMoved = (v1x * v1x + v1y * v1y) > slopPx * slopPx &&
                             (v2x * v2x + v2y * v2y) > slopPx * slopPx
 
-                    // 狀態鎖定競爭機制 (Race & Lock)
-                    // 只有在「確認非同方向滑動」且「兩指都有明確移動」的前提下，才允許觸發縮放，完美相容單指固定、單向滑動滾動
                     if (abs(deltaDist) >= zoomActivationSlopPx && !isMovingInSameDirection && bothMoved) {
                         rightClickCandidate = false
                         mode = Mode.ZOOM
                         lastTwoFingerDist = currentDist
-                        lastHapticTwoFingerDist = currentDist // 初始對齊
-                        triggerZoomHaptics(deltaDist) // 觸發初始縮放刻度震動
+                        lastHapticTwoFingerDist = currentDist
+                        triggerZoomHaptics(deltaDist)
                     } else if (max(abs(deltaX), abs(deltaY)) >= scrollActivationSlopPx) {
                         rightClickCandidate = false
                         if (abs(deltaY) > abs(deltaX)) {
@@ -335,7 +404,6 @@ class GestureEngine(
                     val currentAvgY = (p1.y + p2.y) / 2
                     val rawDeltaY = currentAvgY - lastScrollY
 
-                    // 💡 將實體滑動位移乘以速度，灌入步數累加器並嘗試觸發
                     scrollStepAccumulator += rawDeltaY * getScrollSpeed()
                     triggerStepsFromAccumulator()
 
@@ -343,34 +411,28 @@ class GestureEngine(
                 }
             }
 
-            Mode.ZOOM -> { // 縮放移動階段
+            Mode.ZOOM -> {
                 val p1 = pointers.values.elementAtOrNull(0)
                 val p2 = pointers.values.elementAtOrNull(1)
                 if (p1 != null && p2 != null) {
                     val currentDist = distBetween(p1, p2)
                     lastTwoFingerDist = currentDist
 
-                    // 絕對格線震動對齊。消除原地微顫產生的多餘震動，並將產生的「整數步數」與震動進行 100% 同步
                     val hapticDiff = currentDist - lastHapticTwoFingerDist
                     if (abs(hapticDiff) >= zoomHapticDistancePx) {
                         val ticksCount = (abs(hapticDiff) / zoomHapticDistancePx).toInt()
                         val sign = if (hapticDiff > 0) 1 else -1
 
-                        // 1. 手動震動
                         repeat(ticksCount) {
                             onLocalFeedback(LocalFeedbackType.ZOOM_TICK)
                         }
 
-                        // 2. 累積精準的整數步數（放大為 +1，縮小為 -1）
                         accumulatedZoomSteps += sign * ticksCount
-
-                        // 3. 更新對齊格線
                         lastHapticTwoFingerDist += sign * ticksCount * zoomHapticDistancePx
                     }
 
                     if (now - lastEmitTime >= emitIntervalMs) {
                         if (accumulatedZoomSteps != 0) {
-                            // 直接傳送精準的整數步數給 PC 端，PC 端直接執行，無小數殘留，解決對齊盲區
                             emit(TouchOutEvent.Zoom(accumulatedZoomSteps.toFloat()))
                             accumulatedZoomSteps = 0
                         }
@@ -399,7 +461,6 @@ class GestureEngine(
                 }
             }
 
-            // 三指 Y 軸起點，用來進行三指水平手勢判斷
             Mode.THREE_FINGER -> {
                 if (!threeFingerSwiped) {
                     val p1 = pointers.values.elementAtOrNull(0)
@@ -412,20 +473,16 @@ class GestureEngine(
                         val deltaX = currentAvgX - threeFingerStartX
                         val deltaY = currentAvgY - threeFingerStartY
 
-                        // 比對 X 軸與 Y 軸誰先跨過閥值
                         if (abs(deltaY) >= swipeThresholdPx && abs(deltaY) > abs(deltaX)) {
                             threeFingerSwiped = true
                             onLocalFeedback(LocalFeedbackType.TICK)
                             if (deltaY >= 0) {
-                                // 垂直下滑：顯示桌面 / 最小化所有視窗 (Win + D)
                                 emit(TouchOutEvent.Gesture(GestureType.DESKTOP, GestureDirection.DOWN))
                             } else {
-                                // 垂直上滑：還原所有視窗 (再次 Win + D)
                                 emit(TouchOutEvent.Gesture(GestureType.DESKTOP, GestureDirection.UP))
                             }
                         } else if (abs(deltaX) >= swipeThresholdPx && abs(deltaX) > abs(deltaY)) {
                             threeFingerSwiped = true
-
                             onLocalFeedback(LocalFeedbackType.TICK)
                             onToggleKeyboard()
                         }
@@ -439,6 +496,41 @@ class GestureEngine(
 
     fun onUp(id: Long) {
         val p = pointers[id] ?: return
+
+        // 💡 關鍵：若在觀望期內手指抬起（接力成功）
+        if (isHandOffPending) {
+            handOffJob?.cancel()
+            isHandOffPending = false
+
+            if (id == handOffPrimaryId) {
+                // 第一指抬起：接力成功！主控權移交給第二指
+                pointers.remove(id)
+                val newPrimaryId = handOffSecondaryId ?: pointers.keys.firstOrNull()
+                if (newPrimaryId != null) {
+                    firstFingerId = newPrimaryId
+                    val newPointer = pointers[newPrimaryId]
+                    if (newPointer != null) {
+                        // 重置第二指起點，避免座標跳躍（飛針）
+                        newPointer.startX = newPointer.x
+                        newPointer.startY = newPointer.y
+                    }
+
+                    // 若原本在拖曳，維持 DRAG 模式（不發送 Left Up）；否則維繫 MOVE 模式
+                    mode = if (dragging) Mode.DRAG else Mode.MOVE
+                    transitionedFromMultiTouch = true
+                    lastEmitTime = System.currentTimeMillis()
+                } else {
+                    mode = Mode.IDLE
+                }
+                return
+            } else if (id == handOffSecondaryId) {
+                // 第二指只是快速點一下就抬起，恢復單指狀態
+                pointers.remove(id)
+                mode = if (dragging) Mode.DRAG else Mode.MOVE
+                return
+            }
+        }
+
         val oldMode = mode
 
         when (oldMode) {
@@ -544,7 +636,13 @@ class GestureEngine(
 
     fun reset() {
         longPressJob?.cancel()
+        handOffJob?.cancel() // 💡 清除接力計時器
         pointers.clear()
+
+        isHandOffPending = false
+        handOffPrimaryId = null
+        handOffSecondaryId = null
+
         mode = Mode.IDLE
         dragging = false
         firstFingerId = null
