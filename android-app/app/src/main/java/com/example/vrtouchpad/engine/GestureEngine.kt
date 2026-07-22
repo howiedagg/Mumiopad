@@ -29,7 +29,8 @@ enum class LocalFeedbackType {
     PRESS_LOCK,
     RELEASE_LOCK,
     TICK,
-    ZOOM_TICK
+    ZOOM_TICK,
+    CLICK
 }
 
 data class GestureConfig(
@@ -137,7 +138,6 @@ class GestureEngine(
         }
     }
 
-    // 💡 萃取私有函數 1：初始化雙指滾動基準點
     private fun initTwoFingerScroll() {
         pointers.values.forEach {
             it.startX = it.x
@@ -151,7 +151,6 @@ class GestureEngine(
         scrollStepAccumulator = 0f
     }
 
-    // 💡 萃取私有函數 2：處理雙指滾動（計算平均 Y 軸並觸發事件，普通滾動與拖曳滾動共享）
     private fun processTwoFingerScroll() {
         val p1 = pointers.values.elementAtOrNull(0)
         val p2 = pointers.values.elementAtOrNull(1)
@@ -248,7 +247,6 @@ class GestureEngine(
                 transitionedFromMultiTouch = false
 
                 if (dragging) {
-                    // 💡 修復 1：延續拖曳接力時保持 Mode.DRAG，避免被蓋成 Mode.MOVE 導致左鍵卡住與誤發 Click
                     mode = Mode.DRAG
                     val p = pointers[id]
                     if (p != null) {
@@ -276,7 +274,6 @@ class GestureEngine(
                 twoFingerDownTime = now
 
                 if (dragging) {
-                    // 💡 修復 2：拖曳中按下第二隻手指，初始化雙指滾動基準點
                     activePointerId = id
                     initTwoFingerScroll()
                     accumulatedDx = 0f
@@ -372,10 +369,8 @@ class GestureEngine(
 
             Mode.DRAG -> {
                 if (pointers.size >= 2) {
-                    // 💡 修復 3：雙指處於拖曳狀態時，複用 processTwoFingerScroll 進行滾動
                     processTwoFingerScroll()
                 } else if (id == activePointerId || (activePointerId == null && id == firstFingerId)) {
-                    // 單指拖曳移動游標
                     val distFromAnchor = sqrt(
                         (p.x - dragStillAnchorX) * (p.x - dragStillAnchorX) +
                                 (p.y - dragStillAnchorY) * (p.y - dragStillAnchorY)
@@ -585,6 +580,7 @@ class GestureEngine(
                     }
                 } else {
                     if (dist(p) < slopPx && !transitionedFromMultiTouch) {
+                        onLocalFeedback(LocalFeedbackType.CLICK) // 👈 改用強烈的 CLICK
                         emit(TouchOutEvent.Click(MouseButton.LEFT, ClickAction.CLICK))
                     }
                     mode = Mode.IDLE
@@ -593,6 +589,7 @@ class GestureEngine(
             }
 
             Mode.PREDRAG_WAIT -> if (id == firstFingerId) {
+                onLocalFeedback(LocalFeedbackType.TICK)
                 emit(TouchOutEvent.Click(MouseButton.LEFT, ClickAction.CLICK))
                 mode = Mode.IDLE
                 onLocalFeedback(LocalFeedbackType.RELEASE_LOCK)
@@ -650,8 +647,10 @@ class GestureEngine(
 
                 if (tapDuration <= config.tapTimeoutMs && movedDist < slopPx) {
                     if (rightClickCandidate) {
+                        onLocalFeedback(LocalFeedbackType.CLICK) // 👈 改用強烈的 CLICK
                         emit(TouchOutEvent.Click(MouseButton.RIGHT, ClickAction.CLICK))
                     } else if (id != firstFingerId) {
+                        onLocalFeedback(LocalFeedbackType.CLICK) // 👈 改用強烈的 CLICK
                         emit(TouchOutEvent.Click(MouseButton.LEFT, ClickAction.CLICK))
                     }
                 }
@@ -702,7 +701,6 @@ class GestureEngine(
             Mode.IDLE -> Unit
         }
 
-        // 💡 確保剩餘 1 隻手指時能流暢繼承主控權
         if (pointers.isEmpty() && mode != Mode.DRAG) {
             mode = Mode.IDLE
             firstFingerId = null

@@ -66,6 +66,15 @@ fun Touchpad(
             },
             onLocalFeedback = { type ->
                 val constant = when (type) {
+                    LocalFeedbackType.CLICK -> {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                            // CONFIRM (API 30+)：Android 最明確、有感且紮實的按鈕確認震動
+                            HapticFeedbackConstants.CONFIRM
+                        } else {
+                            // KEYBOARD_PRESS：較舊系統上清晰有感的實體鍵盤觸感
+                            HapticFeedbackConstants.KEYBOARD_PRESS
+                        }
+                    }
                     LocalFeedbackType.PRESS_LOCK -> {
                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
                             HapticFeedbackConstants.KEYBOARD_PRESS
