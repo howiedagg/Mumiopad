@@ -187,8 +187,14 @@ class GestureEngine(
             }
             2 -> {
                 longPressJob?.cancel()
+                twoFingerDownTime = System.currentTimeMillis()
 
-                if (mode == Mode.MOVE || mode == Mode.DRAG || dragging) {
+                val p1 = pointers[firstFingerId]
+                // 檢查第一指在第二指放下前，是否已經有明確的滑動位移
+                val isFirstFingerMoving = p1 != null && dist(p1) >= slopPx
+
+                // 💡 關鍵修復：只有在【正在拖曳】或【第一指已經在滑動】時，才進入接力觀望！
+                if (dragging || isFirstFingerMoving) {
                     isHandOffPending = true
                     handOffPrimaryId = firstFingerId
                     handOffSecondaryId = id
@@ -198,7 +204,6 @@ class GestureEngine(
                         it.startY = it.y
                     }
 
-                    // 💡 動態選擇容錯時間：拖曳中給予高容錯 (450ms)，普通滑動維持急速觀望 (180ms)
                     val currentTimeout = if (dragging) 800L else 180L
 
                     handOffJob = scope.launch {
@@ -209,6 +214,7 @@ class GestureEngine(
                         }
                     }
                 } else {
+                    // 第一指沒動（雙指同時點下，或單指按著不動）➔ 秒切標準雙指模式（支援雙指右鍵與瞬間滾動！）
                     executeTwoFingerWaitSetup()
                 }
             }
@@ -256,10 +262,10 @@ class GestureEngine(
 
         val now = System.currentTimeMillis()
 
-        // 💡 關鍵：接力觀望狀態分流處理
+        // 💡 關鍵修正：觀望期處理
         if (isHandOffPending) {
             if (dragging) {
-                // 拖曳狀態下：第一指可繼續移動視窗，跳過雙指滾動檢測
+                // 拖曳狀態：第一指繼續拉動視窗
                 if (id == handOffPrimaryId) {
                     accumulatedDragDx += dx
                     accumulatedDragDy += dy
@@ -274,19 +280,31 @@ class GestureEngine(
                 }
                 return
             } else {
-                // 普通移動時：滑動秒開滾動模式，凍結鼠標漂移
-                val p1 = pointers[handOffPrimaryId]
+                // 普通移動：檢查【第二指】是否有滑動
                 val p2 = pointers[handOffSecondaryId]
-
-                if (p1 != null && p2 != null) {
-                    val dist1 = sqrt((p1.x - p1.startX) * (p1.x - p1.startX) + (p1.y - p1.startY) * (p1.y - p1.startY))
+                if (p2 != null) {
                     val dist2 = sqrt((p2.x - p2.startX) * (p2.x - p2.startX) + (p2.y - p2.startY) * (p2.y - p2.startY))
 
-                    if (dist1 >= slopPx * 1.2f || dist2 >= slopPx * 1.2f) {
+                    // 💡 漏洞 2 修復：只有當【第二指也開始滑動】時，才切換雙指滾動模式！
+                    if (dist2 >= slopPx * 1.2f) {
                         handOffJob?.cancel()
                         isHandOffPending = false
                         executeTwoFingerWaitSetup()
                         return
+                    }
+                }
+
+                // 💡 第二指沒滑動（只是點擊或按著），第一指繼續順暢移動鼠標！
+                if (id == handOffPrimaryId) {
+                    accumulatedDx += dx
+                    accumulatedDy += dy
+                    if (now - lastEmitTime >= emitIntervalMs) {
+                        if (accumulatedDx != 0f || accumulatedDy != 0f) {
+                            emit(TouchOutEvent.Move(accumulatedDx, accumulatedDy))
+                            accumulatedDx = 0f
+                            accumulatedDy = 0f
+                        }
+                        lastEmitTime = now
                     }
                 }
                 return
@@ -489,12 +507,12 @@ class GestureEngine(
     fun onUp(id: Long) {
         val p = pointers[id] ?: return
 
-        // 💡 關鍵：觀望期抬手接力轉移
         if (isHandOffPending) {
             handOffJob?.cancel()
             isHandOffPending = false
 
             if (id == handOffPrimaryId) {
+                // 第一指抬起：接力成功！
                 pointers.remove(id)
                 val newPrimaryId = handOffSecondaryId ?: pointers.keys.firstOrNull()
                 if (newPrimaryId != null) {
@@ -513,6 +531,14 @@ class GestureEngine(
                 }
                 return
             } else if (id == handOffSecondaryId) {
+                // 💡 第二指抬起：計算點擊時間！
+                val tapDuration = System.currentTimeMillis() - twoFingerDownTime
+                if (tapDuration <= tapTimeoutMs && !dragging) {
+                    // 一指滑動中，第二指快速點一下 ➔ 順暢觸發滑鼠左鍵點擊！
+                    emit(TouchOutEvent.Click(MouseButton.LEFT, ClickAction.CLICK))
+                    onLocalFeedback(LocalFeedbackType.TICK)
+                }
+
                 pointers.remove(id)
                 mode = if (dragging) Mode.DRAG else Mode.MOVE
                 return
