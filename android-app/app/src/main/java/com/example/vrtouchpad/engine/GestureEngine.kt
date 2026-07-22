@@ -185,9 +185,11 @@ class GestureEngine(
                 val p2 = pointers.values.elementAtOrNull(1)
                 if (p1 != null && p2 != null && dist(p1) < stillPx && dist(p2) < stillPx) {
                     rightClickCandidate = false
-                    mode = Mode.RIGHT_DRAG
 
-                    // 💡 雙指右鍵鎖定：廢棄第一指，第二指獨佔 1:1 主控權
+                    // 💡 關鍵修復：改為 Mode.DRAG (左鍵拖曳)，並發送 MouseButton.LEFT！
+                    mode = Mode.DRAG
+                    dragging = true
+
                     val secondFingerId = pointers.keys.elementAtOrNull(1) ?: pointers.keys.last()
                     firstFingerId = secondFingerId
 
@@ -197,7 +199,7 @@ class GestureEngine(
                         activePointer.startY = activePointer.y
                     }
 
-                    emit(TouchOutEvent.Click(MouseButton.RIGHT, ClickAction.DOWN))
+                    emit(TouchOutEvent.Click(MouseButton.LEFT, ClickAction.DOWN))
                     onLocalFeedback(LocalFeedbackType.PRESS_LOCK)
                 }
             }
