@@ -219,15 +219,34 @@ class GestureEngine(
             1 -> {
                 firstFingerId = id
                 activePointerId = id
-                mode = Mode.MOVE
                 firstFingerDownTime = now
-
-                startLongPressWatcher(id)
                 transitionedFromMultiTouch = false
 
-                accumulatedDx = 0f
-                accumulatedDy = 0f
-                lastEmitTime = now
+                if (dragging) {
+                    // 💡 關鍵修復：如果目前處於「拖曳接力/延續拖曳」狀態，必須維持 Mode.DRAG！
+                    // 絕不切換回 Mode.MOVE，防止遺失左鍵釋放事件 (LEFT UP) 或誤觸輕點 (CLICK)
+                    mode = Mode.DRAG
+                    val p = pointers[id]
+                    if (p != null) {
+                        p.startX = p.x
+                        p.startY = p.y
+                        dragStillAnchorX = p.x
+                        dragStillAnchorY = p.y
+                    }
+                    lastSignificantMoveTime = now
+                    accumulatedDx = 0f
+                    accumulatedDy = 0f
+                    accumulatedDragDx = 0f
+                    accumulatedDragDy = 0f
+                    lastEmitTime = now
+                } else {
+                    // 普通狀態：進入一般移動，並啟動長按判定
+                    mode = Mode.MOVE
+                    startLongPressWatcher(id)
+                    accumulatedDx = 0f
+                    accumulatedDy = 0f
+                    lastEmitTime = now
+                }
             }
             2 -> {
                 longPressJob?.cancel()
